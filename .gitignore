@@ -1,0 +1,5 @@
+op-simulator/build
+op-simulator/kernel_file
+op-simulator/op
+op-simulator/OPPROF_*
+op-simulator/test_template
