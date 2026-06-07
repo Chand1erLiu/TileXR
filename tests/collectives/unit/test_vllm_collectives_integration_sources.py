@@ -100,6 +100,13 @@ def test_vllm_adapter_is_opt_in_and_import_lightweight() -> None:
     assert "from vllm" not in source
 
 
+def test_vllm_adapter_normalizes_all_to_all_dims_before_fallback() -> None:
+    source = read_rel("integrations/vllm_ascend/tilexr_collectives/vllm_adapter.py")
+    assert "_same_normalized_dim(" in source
+    assert "if not self._same_normalized_dim(input_, scatter_dim, gather_dim):" in source
+    assert "if scatter_dim != gather_dim:" not in source
+
+
 def test_remote_script_is_isolated_and_logs_environment() -> None:
     source = read_rel("tests/collectives/deploy_and_run_vllm_remote.sh")
     for token in [
@@ -196,6 +203,7 @@ def main() -> None:
     test_torch_helpers_require_contiguous_npu_tensors()
     test_torch_helpers_expose_vllm_compatible_collectives()
     test_vllm_adapter_is_opt_in_and_import_lightweight()
+    test_vllm_adapter_normalizes_all_to_all_dims_before_fallback()
     test_remote_script_is_isolated_and_logs_environment()
     test_remote_script_supports_selected_python_environment()
     test_smoke_launcher_supports_python_override()

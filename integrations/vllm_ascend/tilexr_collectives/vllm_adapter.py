@@ -17,6 +17,19 @@ def enabled() -> bool:
     return _flag_enabled(os.environ.get("VLLM_ASCEND_TILEXR_COLLECTIVES"))
 
 
+def _normalize_dim(dim: int, ndim: int) -> int:
+    if dim < 0:
+        dim += ndim
+    if dim < 0 or dim >= ndim:
+        raise ValueError(f"invalid dim={dim} for tensor with ndim={ndim}")
+    return dim
+
+
+def _same_normalized_dim(tensor, scatter_dim: int, gather_dim: int) -> bool:
+    ndim = int(tensor.dim())
+    return _normalize_dim(scatter_dim, ndim) == _normalize_dim(gather_dim, ndim)
+
+
 @dataclass
 class TileXRVllmCollectivesAdapter:
     rank: int
@@ -76,7 +89,7 @@ class TileXRVllmCollectivesAdapter:
     ):
         if self.should_fallback(input_, scatter_sizes=scatter_sizes, gather_sizes=gather_sizes):
             return None
-        if scatter_dim != gather_dim:
+        if not self._same_normalized_dim(input_, scatter_dim, gather_dim):
             return None
         return self._call_or_fallback(
             lambda: all_to_all(
@@ -88,3 +101,10 @@ class TileXRVllmCollectivesAdapter:
                 gather_dim=gather_dim,
             )
         )
+
+    def _same_normalized_dim(self, tensor, scatter_dim: int, gather_dim: int) -> bool:
+        try:
+            return _same_normalized_dim(tensor, scatter_dim, gather_dim)
+        except (AttributeError, TypeError, ValueError) as exc:
+            self.last_error = exc
+            return False
