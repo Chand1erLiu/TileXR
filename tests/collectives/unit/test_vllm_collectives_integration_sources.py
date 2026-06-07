@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import subprocess
 from pathlib import Path
 
 
@@ -201,6 +202,7 @@ def test_remote_script_can_probe_vllm_source_trees_without_crashing() -> None:
         "TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE",
         "TILEXR_VLLM_REMOTE_DUMMY_MODEL",
         "TILEXR_VLLM_REMOTE_VLLM_PLUGINS",
+        "TILEXR_VLLM_REMOTE_NNAL_ATB_SET_ENV",
         "build_vllm_probe_pythonpath",
         "run_vllm_import_probe",
         "subprocess.run",
@@ -219,6 +221,7 @@ def test_remote_script_can_probe_vllm_source_trees_without_crashing() -> None:
         "load_format=\"dummy\"",
         "skip_tokenizer_init=True",
         "PASS TileXR vllm dummy inference probe",
+        "source \"\\${remote_nnal_atb_set_env}\"",
     ]:
         assert token in source
     assert "local probe_label=\"${1:?probe label required}\"" not in source
@@ -236,6 +239,58 @@ def test_smoke_launcher_supports_python_override() -> None:
     ]:
         assert token in source
     assert "python3 \"${SCRIPT_DIR}/smoke_collectives.py\"" not in source
+
+
+def test_smoke_launcher_accepts_preflight_sentinel_with_plugin_stdout(tmp_path) -> None:
+    fake_python = tmp_path / "fake-python"
+    fake_python.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-c" ]]; then
+  if [[ "${2:-}" == *"tilexr_python_preflight_ok"* ]]; then
+    echo "INFO plugin stdout before sentinel"
+    echo "tilexr_python_preflight_ok"
+    exit 0
+  fi
+  if [[ "${2:-}" == *"sys.executable"* ]]; then
+    printf '%s\\n' "$0"
+    exit 0
+  fi
+fi
+if [[ "${1:-}" == *"smoke_collectives.py" ]]; then
+  exit 0
+fi
+exit 0
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    launcher = ROOT / "integrations/vllm_ascend/run_tilexr_collectives_smoke.sh"
+    result = subprocess.run(
+        [
+            "bash",
+            str(launcher),
+            "2",
+            "16",
+            "0",
+            str(tmp_path / "install"),
+            "allgather",
+            "int32",
+        ],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "TILEXR_VLLM_SMOKE_PYTHON": str(fake_python),
+            "TILEXR_VLLM_SMOKE_TIMEOUT_SEC": "5",
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS TileXR vllm collectives smoke" in result.stdout
 
 
 def test_phase3_smoke_covers_core_collectives() -> None:
@@ -257,6 +312,7 @@ def test_phase3_docs_describe_feature_flag_and_boundaries() -> None:
         "TILEXR_VLLM_REMOTE_VLLM_SOURCE",
         "TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE",
         "TILEXR_VLLM_REMOTE_DUMMY_MODEL",
+        "TILEXR_VLLM_REMOTE_NNAL_ATB_SET_ENV",
         "TILEXR_VLLM_REMOTE_PYTHONPATH",
         "tilexr-vllm29",
         "torch==2.9.0",
@@ -268,6 +324,7 @@ def test_phase3_docs_describe_feature_flag_and_boundaries() -> None:
         "TileXR vllm dummy inference probe",
         "NPUCommunicator patched",
         "load_format=\"dummy\"",
+        "libatb.so",
         "torchvision",
         "rc=0",
         "allreduce",

@@ -37,7 +37,7 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
   exit 2
 fi
 python_probe="$("${PYTHON_BIN}" -c 'import sys; print("tilexr_python_preflight_ok")' 2>/dev/null || true)"
-if [[ "${python_probe}" != "tilexr_python_preflight_ok" ]]; then
+if [[ "${python_probe}" != *"tilexr_python_preflight_ok"* ]]; then
   echo "ERROR: Python command failed interpreter preflight: ${PYTHON_BIN}" >&2
   exit 2
 fi

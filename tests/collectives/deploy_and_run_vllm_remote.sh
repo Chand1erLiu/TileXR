@@ -19,6 +19,7 @@ REMOTE_VLLM_SOURCE="${TILEXR_VLLM_REMOTE_VLLM_SOURCE:-}"
 REMOTE_VLLM_ASCEND_SOURCE="${TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE:-}"
 REMOTE_DUMMY_MODEL="${TILEXR_VLLM_REMOTE_DUMMY_MODEL:-}"
 REMOTE_VLLM_PLUGINS="${TILEXR_VLLM_REMOTE_VLLM_PLUGINS:-ascend}"
+REMOTE_NNAL_ATB_SET_ENV="${TILEXR_VLLM_REMOTE_NNAL_ATB_SET_ENV:-}"
 
 branch="$(git -C "${TILEXR_ROOT}" rev-parse --abbrev-ref HEAD)"
 commit="$(git -C "${TILEXR_ROOT}" rev-parse HEAD)"
@@ -51,6 +52,9 @@ if [[ -n "${REMOTE_DUMMY_MODEL}" ]]; then
 fi
 if [[ -n "${REMOTE_VLLM_PLUGINS}" ]]; then
   echo "  remote vllm plugins: ${REMOTE_VLLM_PLUGINS}"
+fi
+if [[ -n "${REMOTE_NNAL_ATB_SET_ENV}" ]]; then
+  echo "  remote NNAL ATB set_env: ${REMOTE_NNAL_ATB_SET_ENV}"
 fi
 
 git clone --no-hardlinks --no-checkout "${TILEXR_ROOT}" "${staging_repo}"
@@ -116,6 +120,7 @@ remote_vllm_source=$(printf '%q' "${REMOTE_VLLM_SOURCE}")
 remote_vllm_ascend_source=$(printf '%q' "${REMOTE_VLLM_ASCEND_SOURCE}")
 remote_dummy_model=$(printf '%q' "${REMOTE_DUMMY_MODEL}")
 remote_vllm_plugins=$(printf '%q' "${REMOTE_VLLM_PLUGINS}")
+remote_nnal_atb_set_env=$(printf '%q' "${REMOTE_NNAL_ATB_SET_ENV}")
 cd $(printf '%q' "${REMOTE_REPO}")
 select_remote_python() {
   selected_python="python3"
@@ -439,6 +444,15 @@ PY
       source "\${ASCEND_HOME_PATH}/set_env.sh"
       set -u
     fi
+  fi
+  if [[ -n "\${remote_nnal_atb_set_env}" ]]; then
+    if [[ ! -f "\${remote_nnal_atb_set_env}" ]]; then
+      echo "ERROR: TILEXR_VLLM_REMOTE_NNAL_ATB_SET_ENV not found: \${remote_nnal_atb_set_env}" >&2
+      exit 2
+    fi
+    set +u
+    source "\${remote_nnal_atb_set_env}"
+    set -u
   fi
   if [[ -n "\${remote_ascend_driver_path}" ]]; then
     export ASCEND_DRIVER_PATH="\${remote_ascend_driver_path}"

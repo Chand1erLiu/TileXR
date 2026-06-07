@@ -194,6 +194,8 @@ access and checks that the opt-in `sitecustomize` hook is loaded by the real vLL
 probe prints `PASS TileXR vllm dummy inference probe` when `LLM.generate()` returns token ids. Set
 `TILEXR_VLLM_REMOTE_VLLM_PLUGINS` only when the remote environment needs a plugin selection other than the default
 `ascend`.
+Set `TILEXR_VLLM_REMOTE_NNAL_ATB_SET_ENV` when the selected vllm-ascend worker path needs an NNAL/ATB environment
+script to resolve `libatb.so`, for example `/usr/local/Ascend/nnal/atb/set_env.sh`.
 
 The probe imports vLLM modules in child Python processes, including
 `vllm.distributed.device_communicators.base_device_communicator` and
@@ -249,6 +251,8 @@ vllm-ascend source trees. The isolated `tilexr-vllm29` environment uses `torch==
 `NPUCommunicator` patch probe printed route counts showing `all_reduce` and `broadcast` through TileXR plus
 `all_gather` fallback. A manual `TILEXR_VLLM_REMOTE_DUMMY_MODEL=/home/d00520898/vllm-ascend/tests/ut/fake_weight`
 probe reached the real vLLM V1 engine and spawned workers with `NPUCommunicator patched` printed in each process, then
-stopped on a vllm-ascend worker import dependency (`torchvision`) before `LLM.generate()` completed. The PR is not
-complete until vllm-ascend inference validation is run or the remaining inference-level blocker is resolved and
-documented.
+stopped on a vllm-ascend worker import dependency (`torchvision`) before `LLM.generate()` completed. After installing
+`torchvision` / `torchaudio` and sourcing NNAL ATB to resolve `libatb.so`, the same probe reached HCCL/Gloo
+initialization and model weight loading, then stopped on a vLLM/vllm-ascend source mismatch:
+`set_forward_context() got an unexpected keyword argument 'virtual_engine'`. The PR is not complete until
+vllm-ascend inference validation is run or the remaining inference-level blocker is resolved and documented.
