@@ -192,9 +192,9 @@ reported without aborting the TileXR shim validation. This is diagnostic only: t
 are visible and why communicator import fails, but it does not prove vllm-ascend inference.
 
 The script syncs the current TileXR commit, initializes submodules from local worktrees, dumps the NPU/CANN/Python
-environment, probes whether `vllm` and `vllm_ascend` are importable, builds `tile-comm` and
-`tilexr-collectives`, runs the standalone 2-rank AllGather correctness check, and runs Python torch-npu shim smoke
-for `int32` and `fp16`.
+environment, probes whether `vllm` and `vllm_ascend` are importable before and after CANN setup, builds
+`tile-comm` and `tilexr-collectives`, runs the standalone 2-rank AllGather correctness check, and runs Python
+torch-npu shim smoke for `int32` and `fp16`.
 
 Current shim coverage is:
 
@@ -224,7 +224,8 @@ PASS TileXR vllm collectives smoke rank_size=2 op=broadcast dtype=fp16
 
 If `torch` or `torch-npu` is missing in the selected Python environment, the preflight fails before the multi-rank
 shim smoke. Missing or non-importable `vllm` / `vllm-ascend` is recorded in the environment dump and isolated import
-probe but does not fail this shim phase. On the current `blue` `tt4` environment, the source-tree probe records
-`libhccl.so` missing during default vLLM import and `zmq` missing when `TORCH_DEVICE_BACKEND_AUTOLOAD=0` is used;
-the available source trees also declare newer torch requirements than `tt4` provides. The PR is not complete until
-vllm-ascend inference validation is run or the remaining environment blocker is resolved and documented.
+probe but does not fail this shim phase. On the current `blue` `tt4` environment, the pre-CANN source-tree probe
+records `libhccl.so` missing during default vLLM import. After CANN setup, top-level `vllm` and `vllm_ascend`
+imports pass, but communicator imports still fail on missing `zmq`; the available source trees also declare newer
+torch requirements than `tt4` provides. The PR is not complete until vllm-ascend inference validation is run or the
+remaining environment blocker is resolved and documented.
