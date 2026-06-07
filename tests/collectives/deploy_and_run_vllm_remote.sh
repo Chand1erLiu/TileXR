@@ -17,6 +17,8 @@ REMOTE_CONDA_ENV="${TILEXR_VLLM_REMOTE_CONDA_ENV:-}"
 REMOTE_CONDA_SH="${TILEXR_VLLM_REMOTE_CONDA_SH:-/home/miniconda3/etc/profile.d/conda.sh}"
 REMOTE_VLLM_SOURCE="${TILEXR_VLLM_REMOTE_VLLM_SOURCE:-}"
 REMOTE_VLLM_ASCEND_SOURCE="${TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE:-}"
+REMOTE_DUMMY_MODEL="${TILEXR_VLLM_REMOTE_DUMMY_MODEL:-}"
+REMOTE_VLLM_PLUGINS="${TILEXR_VLLM_REMOTE_VLLM_PLUGINS:-ascend}"
 
 branch="$(git -C "${TILEXR_ROOT}" rev-parse --abbrev-ref HEAD)"
 commit="$(git -C "${TILEXR_ROOT}" rev-parse HEAD)"
@@ -43,6 +45,12 @@ if [[ -n "${REMOTE_VLLM_SOURCE}" ]]; then
 fi
 if [[ -n "${REMOTE_VLLM_ASCEND_SOURCE}" ]]; then
   echo "  remote vllm-ascend source: ${REMOTE_VLLM_ASCEND_SOURCE}"
+fi
+if [[ -n "${REMOTE_DUMMY_MODEL}" ]]; then
+  echo "  remote dummy model: ${REMOTE_DUMMY_MODEL}"
+fi
+if [[ -n "${REMOTE_VLLM_PLUGINS}" ]]; then
+  echo "  remote vllm plugins: ${REMOTE_VLLM_PLUGINS}"
 fi
 
 git clone --no-hardlinks --no-checkout "${TILEXR_ROOT}" "${staging_repo}"
@@ -106,6 +114,8 @@ remote_conda_env=$(printf '%q' "${REMOTE_CONDA_ENV}")
 remote_conda_sh=$(printf '%q' "${REMOTE_CONDA_SH}")
 remote_vllm_source=$(printf '%q' "${REMOTE_VLLM_SOURCE}")
 remote_vllm_ascend_source=$(printf '%q' "${REMOTE_VLLM_ASCEND_SOURCE}")
+remote_dummy_model=$(printf '%q' "${REMOTE_DUMMY_MODEL}")
+remote_vllm_plugins=$(printf '%q' "${REMOTE_VLLM_PLUGINS}")
 cd $(printf '%q' "${REMOTE_REPO}")
 select_remote_python() {
   selected_python="python3"
@@ -252,6 +262,125 @@ for module_name in [
 PY
 }
 
+probe_vllm_communicator_patch() {
+  build_vllm_probe_pythonpath
+  TILEXR_VLLM_TRACE=1 PYTHONPATH="\${vllm_probe_pythonpath}:\${PYTHONPATH:-}" "\${selected_python}" - <<'PY'
+import os
+from unittest.mock import patch
+
+import tilexr_collectives.vllm_patch as vllm_patch
+from vllm_ascend.distributed.device_communicators.npu_communicator import NPUCommunicator
+
+calls = []
+
+
+class FakeAdapter:
+    def __init__(self, rank, world_size, install_prefix):
+        calls.append(("init", rank, world_size, install_prefix))
+        self.last_error = RuntimeError("forced fallback")
+
+    def all_reduce(self, input_):
+        calls.append(("all_reduce", input_))
+        return ("tilexr-allreduce", input_)
+
+    def all_gather(self, input_, dim=-1):
+        calls.append(("all_gather", input_, dim))
+        return None
+
+    def broadcast(self, tensor, src=0):
+        calls.append(("broadcast", tensor, src))
+        return ("tilexr-broadcast", tensor, src)
+
+
+def fallback_all_gather(self, input_, dim=-1):
+    return ("fallback-allgather", input_, dim)
+
+
+NPUCommunicator.all_gather = fallback_all_gather
+os.environ["VLLM_ASCEND_TILEXR_COLLECTIVES"] = "1"
+with patch.object(vllm_patch, "TileXRVllmCollectivesAdapter", FakeAdapter):
+    patched = vllm_patch.patch_npu_communicator("install")
+    communicator = NPUCommunicator.__new__(NPUCommunicator)
+    communicator.rank = 0
+    communicator.world_size = 2
+    all_reduce_result = communicator.all_reduce("tensor-a")
+    all_gather_result = communicator.all_gather("tensor-b", dim=0)
+    broadcast_result = communicator.broadcast("tensor-c", src=1)
+    counts = communicator._tilexr_collectives_route_counts
+
+assert patched is True
+assert all_reduce_result == ("tilexr-allreduce", "tensor-a")
+assert all_gather_result == ("fallback-allgather", "tensor-b", 0)
+assert broadcast_result == ("tilexr-broadcast", "tensor-c", 1)
+assert counts["all_reduce"]["tilexr"] == 1
+assert counts["all_gather"]["fallback"] == 1
+assert counts["broadcast"]["tilexr"] == 1
+print("PASS TileXR vllm NPUCommunicator patch probe")
+print("TileXR vllm NPUCommunicator patch calls:", calls)
+print("TileXR vllm NPUCommunicator route counts:", counts)
+PY
+}
+
+probe_vllm_dummy_inference() {
+  if [[ -z "\${remote_dummy_model}" ]]; then
+    echo "Skipping TileXR vllm dummy inference probe; TILEXR_VLLM_REMOTE_DUMMY_MODEL is not set."
+    return 0
+  fi
+  if [[ ! -d "\${remote_dummy_model}" ]]; then
+    echo "ERROR: TILEXR_VLLM_REMOTE_DUMMY_MODEL does not exist: \${remote_dummy_model}" >&2
+    return 2
+  fi
+  build_vllm_probe_pythonpath
+  local probe_script
+  probe_script="\$(mktemp "\${TMPDIR:-/tmp}/tilexr_vllm_dummy_inference.XXXXXX.py")"
+  cat > "\${probe_script}" <<'PY'
+from __future__ import annotations
+
+import os
+
+from vllm import LLM, SamplingParams
+
+
+def main() -> None:
+    model = os.environ["TILEXR_VLLM_REMOTE_DUMMY_MODEL"]
+    llm = LLM(
+        model=model,
+        skip_tokenizer_init=True,
+        load_format="dummy",
+        tensor_parallel_size=2,
+        max_model_len=64,
+        gpu_memory_utilization=0.2,
+        enforce_eager=True,
+        trust_remote_code=False,
+    )
+    outputs = llm.generate(
+        {"prompt_token_ids": [1, 2, 3]},
+        SamplingParams(max_tokens=1, temperature=0.0, detokenize=False),
+    )
+    token_ids = [list(sample.token_ids) for sample in outputs[0].outputs]
+    if not token_ids or not token_ids[0]:
+        raise RuntimeError(f"empty dummy inference output: {token_ids}")
+    print("PASS TileXR vllm dummy inference probe")
+    print("TileXR vllm dummy inference token ids:", token_ids)
+
+
+if __name__ == "__main__":
+    main()
+PY
+  set +e
+  VLLM_PLUGINS="\${remote_vllm_plugins}" \
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 \
+    TILEXR_VLLM_TRACE=1 \
+    TILEXR_INSTALL_PREFIX="\${PWD}/install" \
+    TILEXR_VLLM_REMOTE_DUMMY_MODEL="\${remote_dummy_model}" \
+    PYTHONPATH="\${vllm_probe_pythonpath}:\${PYTHONPATH:-}" \
+    "\${selected_python}" "\${probe_script}"
+  local rc="$?"
+  set -e
+  rm -f "\${probe_script}"
+  return "\${rc}"
+}
+
 run_selected_python_preflight() {
   "\${selected_python}" - <<'PY'
 import sys
@@ -322,6 +451,7 @@ PY
   set -u
   probe_vllm_environment "post-cann"
   run_selected_python_preflight
+  probe_vllm_communicator_patch
   cmake_args=(
     -DCMAKE_INSTALL_PREFIX=install
     -DTILEXR_BUILD_COLLECTIVES=ON
@@ -337,6 +467,7 @@ PY
   cmake -S . -B build-vllm-collectives \
     "\${cmake_args[@]}"
   cmake --build build-vllm-collectives --target install test_tilexr_collectives_correctness tilexr_collective_perf -j"\$(nproc)"
+  probe_vllm_dummy_inference
   ctest --test-dir build-vllm-collectives --output-on-failure
   (
     cd tests/collectives

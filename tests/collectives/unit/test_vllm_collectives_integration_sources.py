@@ -19,8 +19,10 @@ def test_vllm_ascend_shim_files_exist() -> None:
         "integrations/vllm_ascend/tilexr_collectives/__init__.py",
         "integrations/vllm_ascend/tilexr_collectives/runtime.py",
         "integrations/vllm_ascend/tilexr_collectives/torch_collectives.py",
+        "integrations/vllm_ascend/tilexr_collectives/vllm_patch.py",
         "integrations/vllm_ascend/smoke_collectives.py",
         "integrations/vllm_ascend/run_tilexr_collectives_smoke.sh",
+        "integrations/vllm_ascend/sitecustomize.py",
         "tests/collectives/deploy_and_run_vllm_remote.sh",
     ]:
         assert_exists(path)
@@ -109,6 +111,36 @@ def test_vllm_adapter_normalizes_all_to_all_dims_before_fallback() -> None:
     assert "if scatter_dim != gather_dim:" not in source
 
 
+def test_vllm_patch_hooks_npu_communicator_methods() -> None:
+    source = read_rel("integrations/vllm_ascend/tilexr_collectives/vllm_patch.py")
+    for token in [
+        "def patch_npu_communicator(",
+        "VLLM_ASCEND_TILEXR_COLLECTIVES",
+        "TILEXR_VLLM_TRACE",
+        "NPUCommunicator",
+        "_tilexr_collectives_adapter",
+        "_tilexr_collectives_route_counts",
+        "all_reduce",
+        "all_gather",
+        "reduce_scatter",
+        "all_to_all",
+        "broadcast",
+        "return original(self",
+    ]:
+        assert token in source
+
+
+def test_sitecustomize_auto_patches_only_when_enabled() -> None:
+    source = read_rel("integrations/vllm_ascend/sitecustomize.py")
+    for token in [
+        "VLLM_ASCEND_TILEXR_COLLECTIVES",
+        "patch_npu_communicator",
+        "sitecustomize",
+    ]:
+        assert token in source
+    assert "raise" not in source
+
+
 def test_remote_script_is_isolated_and_logs_environment() -> None:
     source = read_rel("tests/collectives/deploy_and_run_vllm_remote.sh")
     for token in [
@@ -167,6 +199,8 @@ def test_remote_script_can_probe_vllm_source_trees_without_crashing() -> None:
     for token in [
         "TILEXR_VLLM_REMOTE_VLLM_SOURCE",
         "TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE",
+        "TILEXR_VLLM_REMOTE_DUMMY_MODEL",
+        "TILEXR_VLLM_REMOTE_VLLM_PLUGINS",
         "build_vllm_probe_pythonpath",
         "run_vllm_import_probe",
         "subprocess.run",
@@ -177,6 +211,14 @@ def test_remote_script_can_probe_vllm_source_trees_without_crashing() -> None:
         "probe_vllm_environment \"post-cann\"",
         "local probe_label=\"\\${1:?probe label required}\"",
         "pythonpath_entries+=(\"\\${remote_pythonpath}\")",
+        "probe_vllm_communicator_patch",
+        "TileXR vllm NPUCommunicator patch probe",
+        "TileXR vllm NPUCommunicator route counts",
+        "patch_npu_communicator(\"install\")",
+        "probe_vllm_dummy_inference",
+        "load_format=\"dummy\"",
+        "skip_tokenizer_init=True",
+        "PASS TileXR vllm dummy inference probe",
     ]:
         assert token in source
     assert "local probe_label=\"${1:?probe label required}\"" not in source
@@ -214,12 +256,19 @@ def test_phase3_docs_describe_feature_flag_and_boundaries() -> None:
         "VLLM_ASCEND_TILEXR_COLLECTIVES=1",
         "TILEXR_VLLM_REMOTE_VLLM_SOURCE",
         "TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE",
+        "TILEXR_VLLM_REMOTE_DUMMY_MODEL",
         "TILEXR_VLLM_REMOTE_PYTHONPATH",
         "tilexr-vllm29",
         "torch==2.9.0",
         "torch-npu==2.9.0",
         "triton-ascend==3.2.0",
         "vllm_ascend.distributed.device_communicators.npu_communicator",
+        "NPUCommunicator patch probe",
+        "TileXR vllm NPUCommunicator route counts",
+        "TileXR vllm dummy inference probe",
+        "NPUCommunicator patched",
+        "load_format=\"dummy\"",
+        "torchvision",
         "rc=0",
         "allreduce",
         "reducescatter",
@@ -240,6 +289,8 @@ def main() -> None:
     test_torch_helpers_expose_vllm_compatible_collectives()
     test_vllm_adapter_is_opt_in_and_import_lightweight()
     test_vllm_adapter_normalizes_all_to_all_dims_before_fallback()
+    test_vllm_patch_hooks_npu_communicator_methods()
+    test_sitecustomize_auto_patches_only_when_enabled()
     test_remote_script_is_isolated_and_logs_environment()
     test_remote_script_supports_selected_python_environment()
     test_remote_script_can_probe_vllm_source_trees_without_crashing()
