@@ -12,6 +12,8 @@ from .runtime import (
     TileXRCollectivesRuntime,
 )
 from .torch_collectives import all_gather, all_reduce, all_to_all, broadcast, reduce_scatter
+from .vllm_adapter import TileXRVllmCollectivesAdapter
+from .vllm_adapter import enabled as tilexr_vllm_collectives_enabled
 
 __all__ = [
     "TILEXR_DATA_TYPE_BFP16",
@@ -25,9 +27,11 @@ __all__ = [
     "TILEXR_SUCCESS",
     "TileXRCollectivesError",
     "TileXRCollectivesRuntime",
+    "TileXRVllmCollectivesAdapter",
     "all_gather",
     "all_reduce",
     "all_to_all",
     "broadcast",
     "reduce_scatter",
+    "tilexr_vllm_collectives_enabled",
 ]
