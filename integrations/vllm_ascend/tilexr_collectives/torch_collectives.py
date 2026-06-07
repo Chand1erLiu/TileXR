@@ -64,6 +64,27 @@ def _validate_npu_contiguous(tensor, name: str) -> None:
         raise ValueError(f"{name} must be contiguous")
 
 
+def _normalize_dim(dim: int, ndim: int) -> int:
+    if dim < 0:
+        dim += ndim
+    if dim < 0 or dim >= ndim:
+        raise ValueError(f"invalid dim={dim} for tensor with ndim={ndim}")
+    return dim
+
+
+def _move_dim_to_front(tensor, dim: int):
+    dim = _normalize_dim(dim, tensor.dim())
+    if dim == 0:
+        return tensor.contiguous(), dim
+    return tensor.movedim(dim, 0).contiguous(), dim
+
+
+def _restore_dim_from_front(tensor, dim: int):
+    if dim == 0:
+        return tensor.contiguous()
+    return tensor.movedim(0, dim).contiguous()
+
+
 @lru_cache(maxsize=32)
 def _cached_runtime(rank: int, world_size: int, install_prefix: str, device_index: int) -> TileXRCollectivesRuntime:
     _bind_npu_device(device_index)
@@ -89,41 +110,124 @@ def _select_runtime(runtime, rank: int, world_size: int, install_prefix: str, de
     return runtime
 
 
-def all_gather(tensor, rank: int, world_size: int, install_prefix: str, runtime=None):
+def all_gather(tensor, rank: int, world_size: int, install_prefix: str, dim: int = -1, runtime=None):
     torch = _torch()
     _validate_npu_contiguous(tensor, "tensor")
     if tensor.numel() <= 0:
         raise ValueError("tensor must contain at least one element")
-    device_index = _npu_device_index(tensor)
+    moved, normalized_dim = _move_dim_to_front(tensor, dim)
+    device_index = _npu_device_index(moved)
     _bind_npu_device(device_index)
     rt = _select_runtime(runtime, rank, world_size, install_prefix, device_index)
-    output = torch.empty((world_size * tensor.numel(),), dtype=tensor.dtype, device=tensor.device)
+    output = torch.empty((world_size * moved.numel(),), dtype=moved.dtype, device=moved.device)
     rt.all_gather(
-        send_ptr=tensor.data_ptr(),
+        send_ptr=moved.data_ptr(),
         recv_ptr=output.data_ptr(),
-        send_count=tensor.numel(),
-        tilexr_dtype=_torch_dtype_to_tilexr(tensor.dtype),
+        send_count=moved.numel(),
+        tilexr_dtype=_torch_dtype_to_tilexr(moved.dtype),
         stream_ptr=_current_stream_ptr(device_index),
     )
-    return output.view(world_size, *tensor.shape)
+    gathered = output.view(world_size, *moved.shape).reshape(world_size * moved.shape[0], *moved.shape[1:])
+    return _restore_dim_from_front(gathered, normalized_dim)
 
 
-def all_to_all(tensor, rank: int, world_size: int, install_prefix: str, runtime=None):
+def all_reduce(tensor, rank: int, world_size: int, install_prefix: str, runtime=None):
     torch = _torch()
     _validate_npu_contiguous(tensor, "tensor")
     if tensor.numel() <= 0:
         raise ValueError("tensor must contain at least one element")
-    if tensor.numel() % world_size != 0:
-        raise ValueError(f"tensor.numel()={tensor.numel()} must be divisible by world_size={world_size}")
     device_index = _npu_device_index(tensor)
     _bind_npu_device(device_index)
     rt = _select_runtime(runtime, rank, world_size, install_prefix, device_index)
     output = torch.empty_like(tensor)
-    rt.all_to_all(
+    rt.all_reduce(
         send_ptr=tensor.data_ptr(),
         recv_ptr=output.data_ptr(),
-        send_count_per_peer=tensor.numel() // world_size,
+        count=tensor.numel(),
         tilexr_dtype=_torch_dtype_to_tilexr(tensor.dtype),
         stream_ptr=_current_stream_ptr(device_index),
     )
     return output
+
+
+def reduce_scatter(tensor, rank: int, world_size: int, install_prefix: str, dim: int = -1, runtime=None):
+    torch = _torch()
+    _validate_npu_contiguous(tensor, "tensor")
+    if tensor.numel() <= 0:
+        raise ValueError("tensor must contain at least one element")
+    moved, normalized_dim = _move_dim_to_front(tensor, dim)
+    if moved.shape[0] % world_size != 0:
+        raise ValueError(
+            f"tensor.shape[{normalized_dim}]={tensor.shape[normalized_dim]} "
+            f"must be divisible by world_size={world_size}"
+        )
+    device_index = _npu_device_index(moved)
+    _bind_npu_device(device_index)
+    rt = _select_runtime(runtime, rank, world_size, install_prefix, device_index)
+    output_shape = (moved.shape[0] // world_size, *moved.shape[1:])
+    output = torch.empty(output_shape, dtype=moved.dtype, device=moved.device)
+    rt.reduce_scatter(
+        send_ptr=moved.data_ptr(),
+        recv_ptr=output.data_ptr(),
+        recv_count=output.numel(),
+        tilexr_dtype=_torch_dtype_to_tilexr(moved.dtype),
+        stream_ptr=_current_stream_ptr(device_index),
+    )
+    return _restore_dim_from_front(output, normalized_dim)
+
+
+def broadcast(tensor, rank: int, world_size: int, install_prefix: str, root: int = 0, runtime=None):
+    _validate_npu_contiguous(tensor, "tensor")
+    if tensor.numel() <= 0:
+        raise ValueError("tensor must contain at least one element")
+    if root < 0 or root >= world_size:
+        raise ValueError(f"root must be in [0, {world_size}), got {root}")
+    device_index = _npu_device_index(tensor)
+    _bind_npu_device(device_index)
+    rt = _select_runtime(runtime, rank, world_size, install_prefix, device_index)
+    output = tensor.contiguous()
+    rt.broadcast(
+        buf_ptr=output.data_ptr(),
+        count=output.numel(),
+        tilexr_dtype=_torch_dtype_to_tilexr(output.dtype),
+        root=root,
+        stream_ptr=_current_stream_ptr(device_index),
+    )
+    return output
+
+
+def all_to_all(
+    tensor,
+    rank: int,
+    world_size: int,
+    install_prefix: str,
+    scatter_dim: int = 0,
+    gather_dim: int = -1,
+    runtime=None,
+):
+    torch = _torch()
+    _validate_npu_contiguous(tensor, "tensor")
+    if tensor.numel() <= 0:
+        raise ValueError("tensor must contain at least one element")
+    scatter_dim = _normalize_dim(scatter_dim, tensor.dim())
+    gather_dim = _normalize_dim(gather_dim, tensor.dim())
+    if scatter_dim != gather_dim:
+        raise ValueError("TileXR all_to_all requires scatter_dim and gather_dim to match")
+    moved, normalized_dim = _move_dim_to_front(tensor, scatter_dim)
+    if moved.shape[0] % world_size != 0:
+        raise ValueError(
+            f"tensor.shape[{normalized_dim}]={tensor.shape[normalized_dim]} "
+            f"must be divisible by world_size={world_size}"
+        )
+    device_index = _npu_device_index(moved)
+    _bind_npu_device(device_index)
+    rt = _select_runtime(runtime, rank, world_size, install_prefix, device_index)
+    output = torch.empty_like(moved)
+    rt.all_to_all(
+        send_ptr=moved.data_ptr(),
+        recv_ptr=output.data_ptr(),
+        send_count_per_peer=moved.numel() // world_size,
+        tilexr_dtype=_torch_dtype_to_tilexr(moved.dtype),
+        stream_ptr=_current_stream_ptr(device_index),
+    )
+    return _restore_dim_from_front(output, normalized_dim)

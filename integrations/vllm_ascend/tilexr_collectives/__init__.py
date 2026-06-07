@@ -11,7 +11,7 @@ from .runtime import (
     TileXRCollectivesError,
     TileXRCollectivesRuntime,
 )
-from .torch_collectives import all_gather, all_to_all
+from .torch_collectives import all_gather, all_reduce, all_to_all, broadcast, reduce_scatter
 
 __all__ = [
     "TILEXR_DATA_TYPE_BFP16",
@@ -26,5 +26,8 @@ __all__ = [
     "TileXRCollectivesError",
     "TileXRCollectivesRuntime",
     "all_gather",
+    "all_reduce",
     "all_to_all",
+    "broadcast",
+    "reduce_scatter",
 ]
