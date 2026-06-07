@@ -195,6 +195,18 @@ def test_remote_script_supports_selected_python_environment() -> None:
     assert "python3 -m pip show torch-npu" not in source
 
 
+def test_remote_script_can_pass_consistent_ssh_options_to_ssh_and_rsync() -> None:
+    source = read_rel("tests/collectives/deploy_and_run_vllm_remote.sh")
+    for token in [
+        "TILEXR_VLLM_REMOTE_SSH_OPTS",
+        "ssh_args=(",
+        "rsync_ssh_cmd=(",
+        "ssh \"${ssh_args[@]}\"",
+        "rsync -e \"${rsync_ssh_cmd[*]}\"",
+    ]:
+        assert token in source
+
+
 def test_remote_script_can_probe_vllm_source_trees_without_crashing() -> None:
     source = read_rel("tests/collectives/deploy_and_run_vllm_remote.sh")
     for token in [

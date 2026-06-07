@@ -20,6 +20,7 @@ REMOTE_VLLM_ASCEND_SOURCE="${TILEXR_VLLM_REMOTE_VLLM_ASCEND_SOURCE:-}"
 REMOTE_DUMMY_MODEL="${TILEXR_VLLM_REMOTE_DUMMY_MODEL:-}"
 REMOTE_VLLM_PLUGINS="${TILEXR_VLLM_REMOTE_VLLM_PLUGINS:-ascend}"
 REMOTE_NNAL_ATB_SET_ENV="${TILEXR_VLLM_REMOTE_NNAL_ATB_SET_ENV:-}"
+REMOTE_SSH_OPTS="${TILEXR_VLLM_REMOTE_SSH_OPTS:-}"
 
 branch="$(git -C "${TILEXR_ROOT}" rev-parse --abbrev-ref HEAD)"
 commit="$(git -C "${TILEXR_ROOT}" rev-parse HEAD)"
@@ -56,6 +57,16 @@ fi
 if [[ -n "${REMOTE_NNAL_ATB_SET_ENV}" ]]; then
   echo "  remote NNAL ATB set_env: ${REMOTE_NNAL_ATB_SET_ENV}"
 fi
+if [[ -n "${REMOTE_SSH_OPTS}" ]]; then
+  echo "  remote ssh opts: ${REMOTE_SSH_OPTS}"
+fi
+
+ssh_extra_args=()
+if [[ -n "${REMOTE_SSH_OPTS}" ]]; then
+  read -r -a ssh_extra_args <<< "${REMOTE_SSH_OPTS}"
+fi
+ssh_args=("${ssh_extra_args[@]}" "${REMOTE}")
+rsync_ssh_cmd=(ssh "${ssh_extra_args[@]}")
 
 git clone --no-hardlinks --no-checkout "${TILEXR_ROOT}" "${staging_repo}"
 git -C "${staging_repo}" checkout --detach "${commit}"
@@ -95,9 +106,9 @@ esac
 EOF
 )
 
-ssh "${REMOTE}" "bash -lc $(printf '%q' "${remote_prepare}")"
+ssh "${ssh_args[@]}" "bash -lc $(printf '%q' "${remote_prepare}")"
 
-rsync -a --delete \
+rsync -e "${rsync_ssh_cmd[*]}" -a --delete \
   --exclude='.worktrees' \
   --exclude='build' \
   --exclude='build_*' \
@@ -503,7 +514,7 @@ EOF
 )
 
 set +e
-ssh "${REMOTE}" "bash -lc $(printf '%q' "${remote_script}")"
+ssh "${ssh_args[@]}" "bash -lc $(printf '%q' "${remote_script}")"
 ssh_rc="$?"
 set -e
 
