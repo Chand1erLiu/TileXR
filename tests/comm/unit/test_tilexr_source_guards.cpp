@@ -47,6 +47,50 @@ void CheckNotContains(const std::string& path, const std::string& text, const st
     }
 }
 
+std::string RunCommand(const std::string& command)
+{
+    FILE* pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) {
+        std::cerr << "failed to run command: " << command << std::endl;
+        ++g_failures;
+        return {};
+    }
+
+    std::string output;
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    const int status = pclose(pipe);
+    if (status != 0) {
+        std::cerr << "command failed: " << command << std::endl;
+        ++g_failures;
+    }
+    return output;
+}
+
+void CheckNoLineContains(const std::string& description, const std::string& text, const std::string& needle)
+{
+    std::istringstream lines(text);
+    std::string line;
+    while (std::getline(lines, line)) {
+        if (line.find(needle) != std::string::npos) {
+            std::cerr << "unexpected " << description << ": " << line << std::endl;
+            ++g_failures;
+        }
+    }
+}
+
+void TestOpenSourceTarballsAreNotTracked()
+{
+    const std::string command = "git -C " + RepoPath(".") + " ls-files 3rdparty/open_source";
+    const auto trackedFiles = RunCommand(command);
+
+    CheckNoLineContains("tracked open-source dependency archive", trackedFiles, ".tar.gz");
+    CheckNoLineContains("tracked open-source dependency archive", trackedFiles, ".tar.xz");
+}
+
 void TestCommInitChecksDeviceCommArgsSync()
 {
     const std::string path = "src/comm/tilexr_comm.cpp";
@@ -128,6 +172,7 @@ void TestCommBuildIncludesProfilingHeaders()
 
 int main()
 {
+    TestOpenSourceTarballsAreNotTracked();
     TestCommInitChecksDeviceCommArgsSync();
     TestCWrappersDoNotPublishFailedCommunicators();
     TestDumpInitCleansFailedAllocations();
