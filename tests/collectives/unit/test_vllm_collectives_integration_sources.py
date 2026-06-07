@@ -176,6 +176,19 @@ def test_phase3_smoke_covers_core_collectives() -> None:
         assert token in remote_source
 
 
+def test_phase3_docs_describe_feature_flag_and_boundaries() -> None:
+    readme = read_rel("tests/collectives/README.md")
+    for token in [
+        "VLLM_ASCEND_TILEXR_COLLECTIVES=1",
+        "allreduce",
+        "reducescatter",
+        "broadcast",
+        "fallback",
+        "vllm-ascend inference",
+    ]:
+        assert token in readme
+
+
 def main() -> None:
     test_vllm_ascend_shim_files_exist()
     test_runtime_uses_tilexr_c_abi_and_not_hccl()
@@ -187,6 +200,7 @@ def main() -> None:
     test_remote_script_supports_selected_python_environment()
     test_smoke_launcher_supports_python_override()
     test_phase3_smoke_covers_core_collectives()
+    test_phase3_docs_describe_feature_flag_and_boundaries()
     print("PASS vllm collectives integration source checks")
 
 

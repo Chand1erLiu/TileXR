@@ -138,8 +138,11 @@ not including the TileXR install/build library directories.
 
 ## vllm-ascend Shim Smoke on Remote NPU Host
 
-The Phase 2 vllm-ascend shim validation keeps all remote state under a scratch directory and does not modify
-the remote system Python or shell startup files.
+The Phase 3 vllm-ascend shim validation keeps all remote state under a scratch directory and does not modify
+the remote system Python or shell startup files. The TileXR collective path is opt-in: set
+`VLLM_ASCEND_TILEXR_COLLECTIVES=1` to enable the adapter path used by the smoke script. Without that flag,
+`TileXRVllmCollectivesAdapter` reports fallback so a vllm-ascend caller can keep its existing HCCL or
+`torch.distributed` behavior.
 
 ```bash
 TILEXR_VLLM_REMOTE=blue \
@@ -174,15 +177,37 @@ Set `TILEXR_VLLM_REMOTE_CONDA_SH` when the remote conda activation script is not
 `/home/miniconda3/etc/profile.d/conda.sh`.
 
 The script syncs the current TileXR commit, initializes submodules from local worktrees, dumps the NPU/CANN/Python
-environment, builds `tile-comm` and `tilexr-collectives`, runs the standalone 2-rank AllGather correctness check, and
-runs the Python torch-npu shim AllGather smoke for `int32` and `fp16`.
+environment, probes whether `vllm` and `vllm_ascend` are importable, builds `tile-comm` and
+`tilexr-collectives`, runs the standalone 2-rank AllGather correctness check, and runs Python torch-npu shim smoke
+for `int32` and `fp16`.
+
+Current shim coverage is:
+
+- `allgather`
+- `allreduce`
+- `reducescatter`
+- `broadcast`
+- equal-split `alltoall` when the selected topology supports the standalone TileXR AllToAll path
+
+The adapter intentionally falls back for disabled feature flags, non-NPU tensors, non-contiguous tensors, uneven
+`all_gatherv` / `reduce_scatterv` style size lists, mismatched AllToAll scatter/gather dimensions, unsupported
+dtypes or shapes, and missing TileXR libraries. The shim smoke validates TileXR's Python ABI and torch-npu tensor
+pointer path; it is not a substitute for final vllm-ascend inference validation with a real model.
 
 Expected success lines include:
 
 ```text
 PASS TileXR vllm collectives smoke rank_size=2 op=allgather dtype=int32
 PASS TileXR vllm collectives smoke rank_size=2 op=allgather dtype=fp16
+PASS TileXR vllm collectives smoke rank_size=2 op=allreduce dtype=int32
+PASS TileXR vllm collectives smoke rank_size=2 op=allreduce dtype=fp16
+PASS TileXR vllm collectives smoke rank_size=2 op=reducescatter dtype=int32
+PASS TileXR vllm collectives smoke rank_size=2 op=reducescatter dtype=fp16
+PASS TileXR vllm collectives smoke rank_size=2 op=broadcast dtype=int32
+PASS TileXR vllm collectives smoke rank_size=2 op=broadcast dtype=fp16
 ```
 
 If `torch` or `torch-npu` is missing in the selected Python environment, the preflight fails before the multi-rank
-shim smoke. Missing `vllm` or `vllm-ascend` is recorded in the environment dump but does not fail this shim phase.
+shim smoke. Missing `vllm` or `vllm-ascend` is recorded in the environment dump but does not fail this shim phase;
+the PR is not complete until vllm-ascend inference validation is run or the remaining environment blocker is resolved
+and documented.
