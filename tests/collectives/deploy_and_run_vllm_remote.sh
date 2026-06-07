@@ -169,13 +169,15 @@ build_vllm_probe_pythonpath() {
 }
 
 probe_vllm_environment() {
+  local probe_label="${1:?probe label required}"
   build_vllm_probe_pythonpath
-  VLLM_ASCEND_TILEXR_COLLECTIVES=1 PYTHONPATH="\${vllm_probe_pythonpath}:\${PYTHONPATH:-}" "\${selected_python}" - <<'PY'
+  VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_PROBE_LABEL="\${probe_label}" PYTHONPATH="\${vllm_probe_pythonpath}:\${PYTHONPATH:-}" "\${selected_python}" - <<'PY'
 import importlib.util
 import os
 import subprocess
 import sys
 
+print("TileXR vllm environment probe:", os.environ.get("TILEXR_VLLM_PROBE_LABEL", "unknown"))
 print("VLLM_ASCEND_TILEXR_COLLECTIVES:", os.environ.get("VLLM_ASCEND_TILEXR_COLLECTIVES", "unset"))
 for mod in ["vllm", "vllm_ascend"]:
     spec = importlib.util.find_spec(mod)
@@ -288,7 +290,7 @@ PY
   npu-smi info || true
   select_remote_python
   dump_selected_python_environment
-  probe_vllm_environment
+  probe_vllm_environment "pre-cann"
   cmake --version 2>/dev/null | sed -n '1p' || true
   gcc --version 2>/dev/null | sed -n '1p' || true
   g++ --version 2>/dev/null | sed -n '1p' || true
@@ -310,6 +312,7 @@ PY
   set +u
   source scripts/common_env.sh
   set -u
+  probe_vllm_environment "post-cann"
   run_selected_python_preflight
   cmake_args=(
     -DCMAKE_INSTALL_PREFIX=install

@@ -168,6 +168,8 @@ def test_remote_script_can_probe_vllm_source_trees_without_crashing() -> None:
         "TORCH_DEVICE_BACKEND_AUTOLOAD",
         "vllm.distributed.device_communicators.base_device_communicator",
         "vllm_ascend.distributed.device_communicators.npu_communicator",
+        "probe_vllm_environment \"pre-cann\"",
+        "probe_vllm_environment \"post-cann\"",
     ]:
         assert token in source
 
