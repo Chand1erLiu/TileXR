@@ -19,10 +19,13 @@ if [[ ! "${COUNT}" =~ ^[0-9]+$ || "${COUNT}" -le 0 ]]; then
   echo "ERROR: count must be a positive integer" >&2
   exit 2
 fi
-if [[ "${OP}" != "allgather" && "${OP}" != "alltoall" ]]; then
-  echo "ERROR: op must be allgather or alltoall" >&2
-  exit 2
-fi
+case "${OP}" in
+  allgather|alltoall|allreduce|reducescatter|broadcast) ;;
+  *)
+    echo "ERROR: op must be allgather, alltoall, allreduce, reducescatter, or broadcast" >&2
+    exit 2
+    ;;
+esac
 if [[ "${DTYPE}" != "int32" && "${DTYPE}" != "fp16" ]]; then
   echo "ERROR: dtype must be int32 or fp16" >&2
   exit 2

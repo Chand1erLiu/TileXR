@@ -138,6 +138,27 @@ PY
   "\${selected_python}" -m pip show vllm-ascend || true
 }
 
+probe_vllm_environment() {
+  VLLM_ASCEND_TILEXR_COLLECTIVES=1 PYTHONPATH="integrations/vllm_ascend:\${PYTHONPATH:-}" "\${selected_python}" - <<'PY'
+import importlib.util
+import os
+
+print("VLLM_ASCEND_TILEXR_COLLECTIVES:", os.environ.get("VLLM_ASCEND_TILEXR_COLLECTIVES", "unset"))
+for mod in ["vllm", "vllm_ascend"]:
+    spec = importlib.util.find_spec(mod)
+    print(f"{mod}: {spec.origin if spec else 'MISSING'}")
+try:
+    from tilexr_collectives.vllm_adapter import TileXRVllmCollectivesAdapter, enabled
+
+    adapter = TileXRVllmCollectivesAdapter(rank=0, world_size=2, install_prefix="install")
+    print("tilexr vllm adapter:", TileXRVllmCollectivesAdapter.__name__)
+    print("tilexr vllm adapter enabled:", enabled())
+    print("tilexr vllm adapter fallback without tensor:", adapter.should_fallback())
+except Exception as exc:
+    print(f"tilexr vllm adapter probe: {type(exc).__name__}: {exc}")
+PY
+}
+
 run_selected_python_preflight() {
   "\${selected_python}" - <<'PY'
 import sys
@@ -184,6 +205,7 @@ PY
   npu-smi info || true
   select_remote_python
   dump_selected_python_environment
+  probe_vllm_environment
   cmake --version 2>/dev/null | sed -n '1p' || true
   gcc --version 2>/dev/null | sed -n '1p' || true
   g++ --version 2>/dev/null | sed -n '1p' || true
@@ -228,8 +250,14 @@ PY
   )
   (
     cd integrations/vllm_ascend
-    TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install allgather int32
-    TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install allgather fp16
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install allgather int32
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install allgather fp16
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install allreduce int32
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install allreduce fp16
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install reducescatter int32
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install reducescatter fp16
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install broadcast int32
+    VLLM_ASCEND_TILEXR_COLLECTIVES=1 TILEXR_VLLM_SMOKE_TIMEOUT_SEC=600 TILEXR_VLLM_SMOKE_PYTHON="\${selected_python}" ./run_tilexr_collectives_smoke.sh 2 16 0 ../../install broadcast fp16
   )
 } 2>&1 | tee $(printf '%q' "${REMOTE_LOG}")
 EOF

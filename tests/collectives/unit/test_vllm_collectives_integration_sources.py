@@ -164,6 +164,18 @@ def test_smoke_launcher_supports_python_override() -> None:
     assert "python3 \"${SCRIPT_DIR}/smoke_collectives.py\"" not in source
 
 
+def test_phase3_smoke_covers_core_collectives() -> None:
+    smoke_source = read_rel("integrations/vllm_ascend/smoke_collectives.py")
+    launcher_source = read_rel("integrations/vllm_ascend/run_tilexr_collectives_smoke.sh")
+    remote_source = read_rel("tests/collectives/deploy_and_run_vllm_remote.sh")
+    for token in ["allreduce", "reducescatter", "broadcast"]:
+        assert token in smoke_source
+        assert token in launcher_source
+        assert token in remote_source
+    for token in ["probe_vllm_environment", "vllm_ascend", "VLLM_ASCEND_TILEXR_COLLECTIVES"]:
+        assert token in remote_source
+
+
 def main() -> None:
     test_vllm_ascend_shim_files_exist()
     test_runtime_uses_tilexr_c_abi_and_not_hccl()
@@ -174,6 +186,7 @@ def main() -> None:
     test_remote_script_is_isolated_and_logs_environment()
     test_remote_script_supports_selected_python_environment()
     test_smoke_launcher_supports_python_override()
+    test_phase3_smoke_covers_core_collectives()
     print("PASS vllm collectives integration source checks")
 
 
