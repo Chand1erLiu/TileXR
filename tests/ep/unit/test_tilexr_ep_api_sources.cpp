@@ -182,7 +182,7 @@ void TestNoForbiddenDependencies()
         "src/ep/host/ep_layout.cpp",
     };
     const std::vector<std::string> forbidden = {
-        "src/mc2",
+        "examples/mc2",
         "3rdparty/ops-transformer",
         "GetHcclContext",
         "TileXRUDMARegister",

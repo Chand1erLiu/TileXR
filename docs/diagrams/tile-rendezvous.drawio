@@ -1,0 +1,124 @@
+<mxGraphModel dx="1140" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1180" pageHeight="660" math="0" shadow="0">
+  <root>
+    <mxCell id="0"/>
+    <mxCell id="1" parent="0"/>
+
+    <mxCell id="title" value="From BSP Phases to Tile-Level Asynchronous Rendezvous" style="text;html=1;align=center;verticalAlign=middle;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+      <mxGeometry x="40" y="10" width="1100" height="30" as="geometry"/>
+    </mxCell>
+
+    <!-- Left: BSP -->
+    <mxCell id="bsp" value="Classic BSP collective — coarse all-ranks phases" style="swimlane;startSize=30;fillColor=#f8cecc;strokeColor=#b85450;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="40" y="60" width="460" height="520" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_c1" value="Compute phase&#10;(entire tensor)" style="rounded=0;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="bsp">
+      <mxGeometry x="100" y="46" width="300" height="64" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_b1" value="Host barrier — all ranks wait" style="rounded=0;whiteSpace=wrap;fillColor=#fde0dc;strokeColor=#b85450;fontStyle=2;" vertex="1" parent="bsp">
+      <mxGeometry x="100" y="128" width="300" height="36" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_m1" value="Communicate phase&#10;(entire tensor)" style="rounded=0;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="bsp">
+      <mxGeometry x="100" y="182" width="300" height="64" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_b2" value="Host barrier — all ranks wait" style="rounded=0;whiteSpace=wrap;fillColor=#fde0dc;strokeColor=#b85450;fontStyle=2;" vertex="1" parent="bsp">
+      <mxGeometry x="100" y="264" width="300" height="36" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_c2" value="Compute phase&#10;(entire tensor)" style="rounded=0;whiteSpace=wrap;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="bsp">
+      <mxGeometry x="100" y="318" width="300" height="64" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_note" value="Communication advances only at coarse all-ranks barriers.&#10;The device repeatedly returns to host scheduling; fast ranks idle while waiting for the slowest." style="text;html=1;align=center;whiteSpace=wrap;fontColor=#a02020;" vertex="1" parent="bsp">
+      <mxGeometry x="30" y="400" width="400" height="100" as="geometry"/>
+    </mxCell>
+    <mxCell id="bsp_time" value="time &#8595;" style="text;html=1;align=center;rotation=0;fontStyle=1;fontColor=#b85450;" vertex="1" parent="bsp">
+      <mxGeometry x="20" y="180" width="60" height="30" as="geometry"/>
+    </mxCell>
+
+    <!-- Right: TileXR -->
+    <mxCell id="tx" value="TileXR — tile-level AICore-driven rendezvous" style="swimlane;startSize=30;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;whiteSpace=wrap;" vertex="1" parent="1">
+      <mxGeometry x="560" y="60" width="580" height="520" as="geometry"/>
+    </mxCell>
+    <mxCell id="tx_axis" value="overlapping pipeline  &#8594;" style="text;html=1;align=left;fontStyle=2;fontColor=#2d6a2d;" vertex="1" parent="tx">
+      <mxGeometry x="90" y="40" width="300" height="20" as="geometry"/>
+    </mxCell>
+
+    <!-- Tile 0 -->
+    <mxCell id="t0l" value="Tile 0" style="text;html=1;align=right;fontStyle=1;" vertex="1" parent="tx">
+      <mxGeometry x="10" y="78" width="60" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t0p" value="Produce" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tx">
+      <mxGeometry x="80" y="78" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t0x" value="Transfer" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="tx">
+      <mxGeometry x="190" y="78" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t0s" value="Sync (flag)" style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="tx">
+      <mxGeometry x="300" y="78" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t0c" value="Consume" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="tx">
+      <mxGeometry x="410" y="78" width="100" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- Tile 1 -->
+    <mxCell id="t1l" value="Tile 1" style="text;html=1;align=right;fontStyle=1;" vertex="1" parent="tx">
+      <mxGeometry x="10" y="130" width="60" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t1p" value="Produce" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tx">
+      <mxGeometry x="135" y="130" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t1x" value="Transfer" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="tx">
+      <mxGeometry x="245" y="130" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t1s" value="Sync (flag)" style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="tx">
+      <mxGeometry x="355" y="130" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t1c" value="Consume" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="tx">
+      <mxGeometry x="460" y="130" width="100" height="40" as="geometry"/>
+    </mxCell>
+
+    <!-- Tile 2 -->
+    <mxCell id="t2l" value="Tile 2" style="text;html=1;align=right;fontStyle=1;" vertex="1" parent="tx">
+      <mxGeometry x="10" y="182" width="60" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t2p" value="Produce" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tx">
+      <mxGeometry x="190" y="182" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t2x" value="Transfer" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="tx">
+      <mxGeometry x="300" y="182" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t2s" value="Sync (flag)" style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="tx">
+      <mxGeometry x="410" y="182" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t2c" value="Consume" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="tx">
+      <mxGeometry x="465" y="226" width="100" height="36" as="geometry"/>
+    </mxCell>
+
+    <!-- Tile 3 -->
+    <mxCell id="t3l" value="Tile 3" style="text;html=1;align=right;fontStyle=1;" vertex="1" parent="tx">
+      <mxGeometry x="10" y="234" width="60" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t3p" value="Produce" style="rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="tx">
+      <mxGeometry x="245" y="234" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t3x" value="Transfer" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="tx">
+      <mxGeometry x="355" y="234" width="100" height="40" as="geometry"/>
+    </mxCell>
+    <mxCell id="t3s" value="Sync (flag)" style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="tx">
+      <mxGeometry x="410" y="282" width="100" height="36" as="geometry"/>
+    </mxCell>
+    <mxCell id="t3c" value="Consume" style="rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="tx">
+      <mxGeometry x="465" y="324" width="100" height="36" as="geometry"/>
+    </mxCell>
+
+    <mxCell id="tx_note" value="Each tile is produced, transferred, flag-synchronized, and consumed independently. AICore observes data readiness and runtime state, choosing IPC/MTE, UDMA, or SDMA and advancing without repeated host round-trips, so stages of different tiles overlap." style="text;html=1;align=center;whiteSpace=wrap;fontColor=#2d6a2d;" vertex="1" parent="tx">
+      <mxGeometry x="30" y="380" width="520" height="120" as="geometry"/>
+    </mxCell>
+
+    <!-- center arrow -->
+    <mxCell id="mid" value="" style="endArrow=classic;html=1;strokeColor=#333333;strokeWidth=3;" edge="1" parent="1">
+      <mxGeometry relative="1" as="geometry">
+        <mxPoint x="500" y="320" as="sourcePoint"/>
+        <mxPoint x="560" y="320" as="targetPoint"/>
+      </mxGeometry>
+    </mxCell>
+  </root>
+</mxGraphModel>
