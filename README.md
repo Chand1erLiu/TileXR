@@ -14,6 +14,12 @@ TileXR is designed around three ideas from the current architecture deck:
 
 The current codebase implements the base communication runtime, flag-based synchronization, MC2 examples, and an A5 UDMA registered-memory path. Broader dynamic scheduling, CMO best-effort scheduling, and CCU offload are design targets and should be treated as roadmap unless a specific implementation file says otherwise.
 
+<p align="center">
+  <img src="docs/diagrams/tile-rendezvous.drawio.svg" alt="From BSP phases to tile-level asynchronous rendezvous" width="900"/>
+</p>
+
+Instead of stalling every rank at coarse barriers, TileXR splits a phase into tiles and lets each tile be produced, transferred, flag-synchronized, and consumed independently — so work on different tiles overlaps and the device advances without repeated host round-trips.
+
 ## Features
 
 - **Core communication runtime**: `libtile-comm.so` initializes ranks, shared buffers, peer memory mappings, socket exchange, device `CommArgs`, and DFX state. It builds only against CANN runtime/ACL/driver APIs and TileXR-owned types — it does not include or link hcomm, HCCL, shmem, or ops-transformer.
@@ -155,6 +161,12 @@ TileXR/
 
 ## Architecture
 
+The runtime is layered: applications and integrations sit on top of the TileXR libraries, which expose a public API and device headers over three interchangeable transports, all built on the CANN runtime, driver HAL, and Ascend NPU hardware.
+
+<p align="center">
+  <img src="docs/diagrams/architecture-overview.drawio.svg" alt="TileXR layered architecture" width="940"/>
+</p>
+
 ### Core Runtime
 
 `src/comm/` builds `libtile-comm.so` and exposes the public API in `src/include/tilexr_api.h`. This library is intentionally independent of hcomm, HCCL, shmem, and ops-transformer. It uses CANN runtime/ACL/driver APIs plus TileXR-owned communication metadata and datatypes.
@@ -165,7 +177,11 @@ Important host-side entry points, grouped by role:
 - **CommArgs access**: `TileXRGetCommArgsHost` (host view), `TileXRGetCommArgsDev` (device pointer for kernels).
 - **Synchronization rounds**: `TileXRCommNextMagic` hands out a fresh magic value so callers can reuse flag memory across rounds; the optional collectives library uses it to schedule per-launch synchronization.
 
-The runtime allocates shared IPC buffers, exchanges peer mappings, uploads `CommArgs` to device memory, and records topology/capability flags in `CommArgs::extraFlag`.
+The runtime allocates shared IPC buffers, exchanges peer mappings, uploads `CommArgs` to device memory, and records topology/capability flags in `CommArgs::extraFlag`. UDMA and SDMA are brought up as best-effort capabilities — if either is unavailable, initialization continues without setting its `extraFlag` bit.
+
+<p align="center">
+  <img src="docs/diagrams/comm-init-flow.drawio.svg" alt="Communicator initialization flow" width="640"/>
+</p>
 
 ### Device Synchronization
 
@@ -197,6 +213,14 @@ Initial collectives APIs:
 - Shared EP window metadata is written through MTE/UB copies so peer ranks observe slot headers and assist tuples consistently.
 
 This EP path is intentionally independent from `src/mc2`, ops-transformer runtime helpers, shmem, and UDMA. A future route can add a UDMA backend with TileXR-registered receive windows while keeping the peer-memory path as fallback.
+
+### Transports Overview
+
+TileXR offers three data-plane transports that kernels select by data size, link state, peer readiness, and capability flags. IPC/MTE uses same-host peer-memory windows, UDMA targets registered remote memory on A5 / Ascend950, and SDMA performs a local on-card copy within a single device.
+
+<p align="center">
+  <img src="docs/diagrams/transport-paths.drawio.svg" alt="TileXR transport data paths between ranks" width="940"/>
+</p>
 
 ### UDMA Registered Memory
 
@@ -405,6 +429,7 @@ bash scripts/driver_fix.sh
 - [tests/collectives/README.md](tests/collectives/README.md): optional collectives correctness and performance tools
 - [tests/ep/README.md](tests/ep/README.md): standalone EP dispatch build, demo, and future UDMA backend notes
 - [CLAUDE.md](CLAUDE.md): repository guidance for AI coding agents
+- [docs/diagrams/](docs/diagrams/): editable draw.io sources for the README architecture diagrams (SVGs embed the diagram XML, so they reopen in draw.io)
 
 ## Troubleshooting
 
