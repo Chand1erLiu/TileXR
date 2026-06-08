@@ -774,7 +774,7 @@ Run:
 
 ```bash
 TILEXR_VLLM_REMOTE=blue \
-TILEXR_VLLM_REMOTE_BASE=/home/d00520898/tilexr_vllm_phase3_$(date +%Y%m%d_%H%M%S) \
+TILEXR_VLLM_REMOTE_BASE=/home/<remote-user>/tilexr_vllm_phase3_$(date +%Y%m%d_%H%M%S) \
 TILEXR_VLLM_REMOTE_CONDA_ENV=tt4 \
 bash tests/collectives/deploy_and_run_vllm_remote.sh
 ```

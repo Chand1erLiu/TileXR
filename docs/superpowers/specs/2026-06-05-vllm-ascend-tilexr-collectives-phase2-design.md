@@ -31,7 +31,7 @@ modifying that source tree or by claiming inference-path support.
 
 - Do not modify remote system Python, conda base, or shell startup files.
 - Do not install or upgrade vLLM/vllm-ascend packages during this phase.
-- Do not edit `/home/d00520898/vllm-ascend` or `/home/d00520898/vllm/vllm-ascend`.
+- Do not edit `/home/<remote-user>/vllm-ascend` or `/home/<remote-user>/vllm/vllm-ascend`.
 - Do not replace vllm-ascend inference-path collectives yet.
 - Do not treat vllm-ascend import failure as a Phase 2 failure. It is recorded as environment context.
 

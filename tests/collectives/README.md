@@ -249,7 +249,7 @@ vllm-ascend source trees. The isolated `tilexr-vllm29` environment uses `torch==
 `triton-ascend==3.2.0`; after CANN setup, its `vllm.distributed.device_communicators.base_device_communicator` and
 `vllm_ascend.distributed.device_communicators.npu_communicator` probes import with `rc=0`, and the manual
 `NPUCommunicator` patch probe printed route counts showing `all_reduce` and `broadcast` through TileXR plus
-`all_gather` fallback. A manual `TILEXR_VLLM_REMOTE_DUMMY_MODEL=/home/d00520898/vllm-ascend/tests/ut/fake_weight`
+`all_gather` fallback. A manual `TILEXR_VLLM_REMOTE_DUMMY_MODEL=/home/<remote-user>/vllm-ascend/tests/ut/fake_weight`
 probe reached the real vLLM V1 engine and spawned workers with `NPUCommunicator patched` printed in each process, then
 stopped on a vllm-ascend worker import dependency (`torchvision`) before `LLM.generate()` completed. After installing
 `torchvision` / `torchaudio` and sourcing NNAL ATB to resolve `libatb.so`, the same probe reached HCCL/Gloo
