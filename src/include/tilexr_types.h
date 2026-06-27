@@ -20,6 +20,7 @@ constexpr int TILEXR_ERROR_MKIRT = -2;
 constexpr int TILEXR_ERROR_PARA_CHECK_FAIL = -3;
 constexpr int TILEXR_ERROR_INTERNAL = -4;
 constexpr int TILEXR_ERROR_TIMEOUT = -5;
+constexpr int TILEXR_ERROR_NOT_SUPPORT = -6;
 constexpr int TILEXR_ERROR_NOT_FOUND = -7;
 constexpr int64_t TILEXR_INVALID_VALUE = -1;
 
