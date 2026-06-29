@@ -10,7 +10,7 @@
 #ifndef TILEXR_LCCL_OP_H
 #define TILEXR_LCCL_OP_H
 
-#if defined(__DAV_C220_VEC__) || defined(__DAV_C220_CUBE__)
+#if defined(__DAV_C220_VEC__) || defined(__DAV_C220_CUBE__) || defined(__DAV_C310_VEC__)
 
 #include "op_def.h"
 #include "allgather.h"
@@ -49,6 +49,7 @@
 #include "kernels/lcal_broadcast_write.cce"
 #include "kernels/lcal_broadcast_big_data.cce"
 #include "kernels/lcal_all2all_transpose.cce"
+#include "kernels/lcal_profile_probe.cce"
 
 extern "C" __global__ __aicore__ __attribute__((section("Attr_Section_TileXR"))) void TileXRDescriptor() {}
 
@@ -71,6 +72,15 @@ extern "C" __global__ __aicore__ void TileXRBroadcast##suffix(KERNELS_ARGS_FUN()
     } else { \
         TileXRBroadcastBigData(ALLREDUCE_ARGS_CALL(char)); \
     } \
+    } \
+}
+
+#define LCCL_PROFILE_PROBE_FUNC_AUTO_DEF() \
+extern "C" __global__ __aicore__ void TileXRProfileProbe(KERNELS_ARGS_FUN()) \
+{ \
+    if ASCEND_IS_AIV { \
+        GET_COMM_ARGS; \
+        TileXRProfileProbeKernel(KERNELS_ARGS_CALL(), rank, rankSize, extraFlag); \
     } \
 }
 

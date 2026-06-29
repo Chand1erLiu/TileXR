@@ -149,6 +149,7 @@ void TestCollectivesOwnsCceBuild()
     CheckContains(kernelsCmakePath, kernelsCmake, "tilexr_collectives_op.o");
     CheckContains(kernelsCmakePath, kernelsCmake, "tilexr_collectives_op");
     CheckContains(kernelsCmakePath, kernelsCmake, "TILEXR_COLLECTIVES_ENABLE_PROFILING");
+    CheckContains(kernelsCmakePath, kernelsCmake, "TILEXR_COLLECTIVES_1OP_BIN_SIZE 10485760");
     CheckDoesNotContain(kernelsCmakePath, kernelsCmake, "src/comm");
 }
 
@@ -161,6 +162,7 @@ void TestCollectivesKernelSourcesAreScoped()
     CheckContains(kernelTuPath, kernelTu, "LCCL_TYPE_AIV_FUNC(LCCL_ALL_REDUCE_FUNC_AUTO_DEF)");
     CheckContains(kernelTuPath, kernelTu, "LCCL_TYPE_AIV_FUNC(LCCL_REDUCE_SCATTER_FUNC_AUTO_DEF)");
     CheckContains(kernelTuPath, kernelTu, "LCCL_BROADCAST_FUNC_AUTO_DEF()");
+    CheckContains(kernelTuPath, kernelTu, "LCCL_PROFILE_PROBE_FUNC_AUTO_DEF()");
 
     const std::string perfTraceKernelPath = "src/collectives/kernels/perf_trace_kernel.h";
     const auto perfTraceKernel = ReadFile(perfTraceKernelPath);
@@ -170,6 +172,34 @@ void TestCollectivesKernelSourcesAreScoped()
     CheckContains(perfTraceKernelPath, perfTraceKernel, "TileXRPerfAccumulateDuration");
     CheckContains(perfTraceKernelPath, perfTraceKernel, "TileXRPerfTraceEnabled");
     CheckContains(perfTraceKernelPath, perfTraceKernel, "#include \"comm_args.h\"");
+    CheckContains(perfTraceKernelPath, perfTraceKernel, "#include \"datacopy_gm2gm.h\"");
+    CheckContains(perfTraceKernelPath, perfTraceKernel, "TILEXR_PERF_TRACE_STATS_UB_OFFSET");
+    CheckContains(perfTraceKernelPath, perfTraceKernel, "TILEXR_PERF_TRACE_STATS_OFFSET");
+    CheckContains(perfTraceKernelPath, perfTraceKernel, "CpGM2UB");
+    CheckContains(perfTraceKernelPath, perfTraceKernel, "CpUB2GM");
+    CheckContains(perfTraceKernelPath, perfTraceKernel, "GetBlockNum()");
+    CheckDoesNotContain(perfTraceKernelPath, perfTraceKernel, "header->statsOffset");
+    CheckDoesNotContain(perfTraceKernelPath, perfTraceKernel, "header->maxCoreCount");
+    CheckDoesNotContain(perfTraceKernelPath, perfTraceKernel, "header->stageCount");
+    CheckDoesNotContain(perfTraceKernelPath, perfTraceKernel, "slot->count += 1");
+
+    const std::string profileProbePath = "src/collectives/kernels/kernels/lcal_profile_probe.cce";
+    const auto profileProbe = ReadFile(profileProbePath);
+    CheckContains(profileProbePath, profileProbe, "TileXRProfileProbeKernel");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::KERNEL_TOTAL");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::CHUNK_TOTAL");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::POST_SYNC");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::LOCAL_INPUT_TO_IPC");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::FLAG_POLL_WAIT");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::PEER_IPC_TO_OUTPUT");
+    CheckContains(profileProbePath, profileProbe, "PerfStageId::CHUNK_BARRIER");
+    CheckContains(profileProbePath, profileProbe, "TileXRPerfStageBegin");
+    CheckContains(profileProbePath, profileProbe, "TileXRPerfStageEnd");
+    CheckContains(profileProbePath, profileProbe, "TileXRPerfAccumulateDuration");
+    CheckContains(profileProbePath, profileProbe, "TILEXR_PROFILE_PROBE_COPY_UB_BYTES");
+    CheckContains(profileProbePath, profileProbe, "TileXR::TILEXR_PERF_TRACE_STATS_UB_OFFSET");
+    CheckDoesNotContain(profileProbePath, profileProbe, "peerMems");
+    CheckDoesNotContain(profileProbePath, profileProbe, "GET_IPC_MEM_ARGS");
 
     const std::string perfTraceLayoutPath = "src/include/tilexr_perf_trace.h";
     const auto perfTraceLayout = ReadFile(perfTraceLayoutPath);
@@ -184,6 +214,7 @@ void TestCollectivesKernelSourcesAreScoped()
     bool sawAllReduceCce = false;
     bool sawReduceScatterCce = false;
     bool sawBroadcastCce = false;
+    bool sawProfileProbeCce = false;
     for (const auto &path : kernelFiles) {
         const auto text = ReadFile(path);
         CheckDoesNotContain(path, text, "tilexr_comm.h");
@@ -204,12 +235,16 @@ void TestCollectivesKernelSourcesAreScoped()
         if (path.find("lcal_broadcast") != std::string::npos && path.find(".cce") != std::string::npos) {
             sawBroadcastCce = true;
         }
+        if (path.find("lcal_profile_probe.cce") != std::string::npos) {
+            sawProfileProbeCce = true;
+        }
     }
     CheckTrue(sawAllGatherCce, "expected copied allgather .cce sources under src/collectives/kernels");
     CheckTrue(sawAllToAllCce, "expected copied all2all .cce source under src/collectives/kernels");
     CheckTrue(sawAllReduceCce, "expected copied allreduce .cce sources under src/collectives/kernels");
     CheckTrue(sawReduceScatterCce, "expected copied reduce_scatter .cce sources under src/collectives/kernels");
     CheckTrue(sawBroadcastCce, "expected copied broadcast .cce sources under src/collectives/kernels");
+    CheckTrue(sawProfileProbeCce, "expected profile probe .cce source under src/collectives/kernels");
 }
 
 void TestHostRegistrationLivesInCollectives()
@@ -242,6 +277,7 @@ void TestHostRegistrationLivesInCollectives()
     CheckContains(registeredTypesPath, registeredTypes, "TileXR::TileXRType::ALL_REDUCE");
     CheckContains(registeredTypesPath, registeredTypes, "TileXR::TileXRType::REDUCE_SCATTER");
     CheckContains(registeredTypesPath, registeredTypes, "TileXR::TileXRType::BROADCAST");
+    CheckContains(registeredTypesPath, registeredTypes, "TileXR::TileXRType::PROFILE_PROBE");
 }
 
 void TestPerfTraceCycleDivisorIsA5Specific()
