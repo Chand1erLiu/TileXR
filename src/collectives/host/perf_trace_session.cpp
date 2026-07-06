@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <string>
@@ -104,6 +105,45 @@ int64_t ComputeLaunchMessageBytes(TileXR::TileXRType opType, TileXR::TileXRDataT
         elementCount = count * static_cast<int64_t>(rankSize);
     }
     return CountToBytes(elementCount, dataType);
+}
+
+void LogPerfTraceReportFailure(const char *apiName, const PerfTraceSession *session, const char *reason)
+{
+    std::cerr << "TileXR collectives " << apiName << " failed";
+    if (reason != nullptr && reason[0] != '\0') {
+        std::cerr << ": " << reason;
+    }
+    if (session == nullptr) {
+        std::cerr << ", trace=session:null" << std::endl;
+        return;
+    }
+
+    const TileXR::TileXRPerfTraceHeader &header = session->header;
+    std::cerr << ", trace={"
+              << "outputDir=" << session->outputDir
+              << ", deviceTraceReady=" << (session->deviceTraceReady ? 1 : 0)
+              << ", ownsDeviceBuffer=" << (session->ownsDeviceBuffer ? 1 : 0)
+              << ", deviceBufferBytes=" << session->deviceBufferBytes
+              << ", hostStats=" << session->hostStats.size()
+              << ", magic=0x" << std::hex << header.magic << std::dec
+              << ", version=" << header.version
+              << ", headerSize=" << header.headerSize
+              << ", stageDescSize=" << header.stageDescSize
+              << ", coreStageStatsSize=" << header.coreStageStatsSize
+              << ", flags=" << header.flags
+              << ", rank=" << header.rank
+              << ", rankSize=" << header.rankSize
+              << ", blockDim=" << header.blockDim
+              << ", maxCoreCount=" << header.maxCoreCount
+              << ", stageCount=" << header.stageCount
+              << ", cycleToUsDivisor=" << header.cycleToUsDivisor
+              << ", launchId=" << header.launchId
+              << ", messageBytes=" << header.messageBytes
+              << ", opType=" << header.opType
+              << ", dataType=" << header.dataType
+              << ", statsOffset=" << header.statsOffset
+              << ", statsBytes=" << header.statsBytes
+              << "}" << std::endl;
 }
 
 } // namespace
@@ -330,9 +370,9 @@ extern "C" int TileXRCollectivePerfWriteReport(TileXRCollectivePerfSession sessi
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
 
+    TileXRCollectives::Host::PerfTraceSession *impl =
+        static_cast<TileXRCollectives::Host::PerfTraceSession *>(session);
     try {
-        TileXRCollectives::Host::PerfTraceSession *impl =
-            static_cast<TileXRCollectives::Host::PerfTraceSession *>(session);
         if (impl->deviceTraceReady) {
             size_t expectedStatsBytes = 0;
             if (!TileXRCollectives::Host::ValidatePerfTraceStatsLayout(impl, &expectedStatsBytes)) {
@@ -349,9 +389,13 @@ extern "C" int TileXRCollectivePerfWriteReport(TileXRCollectivePerfSession sessi
         options.outputDir = impl->outputDir;
         options.emitAiPrompt = impl->config.emitAiPrompt != 0;
         return TileXRCollectives::Host::WritePerfTraceReports(impl->header, impl->hostStats, options);
-    } catch (const std::exception &) {
+    } catch (const std::exception &ex) {
+        TileXRCollectives::Host::LogPerfTraceReportFailure(
+            "TileXRCollectivePerfWriteReport", impl, ex.what());
         return TileXR::TILEXR_ERROR_INTERNAL;
     } catch (...) {
+        TileXRCollectives::Host::LogPerfTraceReportFailure(
+            "TileXRCollectivePerfWriteReport", impl, "unknown exception");
         return TileXR::TILEXR_ERROR_INTERNAL;
     }
 }
@@ -362,18 +406,22 @@ extern "C" int TileXRCollectivePerfWriteIncompleteReport(TileXRCollectivePerfSes
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
 
+    TileXRCollectives::Host::PerfTraceSession *impl =
+        static_cast<TileXRCollectives::Host::PerfTraceSession *>(session);
     try {
-        TileXRCollectives::Host::PerfTraceSession *impl =
-            static_cast<TileXRCollectives::Host::PerfTraceSession *>(session);
         TileXRCollectives::Host::PerfReportOptions options {};
         options.outputDir = impl->outputDir;
         options.emitAiPrompt = impl->config.emitAiPrompt != 0;
         options.incomplete = true;
         options.incompleteReason = reason == nullptr || reason[0] == '\0' ? "kernel launch did not complete" : reason;
         return TileXRCollectives::Host::WritePerfTraceReports(impl->header, impl->hostStats, options);
-    } catch (const std::exception &) {
+    } catch (const std::exception &ex) {
+        TileXRCollectives::Host::LogPerfTraceReportFailure(
+            "TileXRCollectivePerfWriteIncompleteReport", impl, ex.what());
         return TileXR::TILEXR_ERROR_INTERNAL;
     } catch (...) {
+        TileXRCollectives::Host::LogPerfTraceReportFailure(
+            "TileXRCollectivePerfWriteIncompleteReport", impl, "unknown exception");
         return TileXR::TILEXR_ERROR_INTERNAL;
     }
 }

@@ -40,6 +40,8 @@ enum class PerfBarrierPolicy : uint32_t {
     BARRIERED = 2,
 };
 
+// Shared standalone-collectives profiling schema. These ids are common across
+// collective kernels so reports can compare the same stage names across ops.
 enum class PerfStageId : uint32_t {
     KERNEL_TOTAL = 0,
     CHUNK_TOTAL = 1,
