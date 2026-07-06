@@ -30,6 +30,8 @@ constexpr uint32_t ALL_REDUCE_DB_RING_BLOCK_NUM = 34;
 constexpr uint32_t REDUCE_SCATTER_FOUR_STEP_BLOCK_NUM = 34;
 constexpr uint32_t REDUCE_SCATTER_DB_RING_BLOCK_NUM = 36;
 constexpr uint32_t BROADCAST_MAX_RANK_SIZE = 8;
+// Profile probe uses a fixed four-core launch to produce stable per-core profiling samples.
+constexpr uint32_t PROFILE_PROBE_FIXED_BLOCK_NUM = 4;
 constexpr int64_t ONE_MIB = 1LL * 1024 * 1024;
 constexpr int64_t TWO_MIB = 2LL * 1024 * 1024;
 constexpr int64_t THIRTY_TWO_MIB = 32LL * 1024 * 1024;
@@ -228,8 +230,7 @@ uint32_t GetProfileProbeBlockNum(const TileXR::CommArgs &commArgs, int64_t dataS
     if (commArgs.rankSize <= 0 || dataSize < 0) {
         return 0;
     }
-    constexpr uint32_t kDefaultProbeBlocks = 4;
-    return kDefaultProbeBlocks;
+    return PROFILE_PROBE_FIXED_BLOCK_NUM;
 }
 
 } // namespace Host

@@ -355,6 +355,7 @@ install(PROGRAMS
     run_collectives_correctness.sh
     run_collective_perf.sh
     run_collective_perf_multihost.sh
+    run_collective_perf_multihost_suite.sh
     tilexr_collective_profile_report.py
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

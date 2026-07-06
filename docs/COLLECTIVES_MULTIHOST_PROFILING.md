@@ -85,43 +85,27 @@ export TILEXR_COLLECTIVES_RUN_TIMEOUT_SEC=300
 
 ## Build On Every Host
 
-Run this on every peer host before profiling:
+Run the scripted profile build and guard checks on every peer host before profiling:
 
 ```bash
 cd "$REPO"
-source /root/anaconda3/etc/profile.d/conda.sh 2>/dev/null || true
-conda activate pt311 2>/dev/null || true
-source /usr/local/Ascend/cann/set_env.sh
-
-cmake -S . -B "$BUILD" \
-  -DTILEXR_BUILD_COLLECTIVES=ON \
-  -DTILEXR_BUILD_TESTS=ON \
-  -DTILEXR_COLLECTIVES_ENABLE_PROFILING=ON \
-  -DBUILD_TESTING=OFF
-
-cmake --build "$BUILD" --target \
-  test_tilexr_collectives_kernel_ownership \
-  test_tilexr_collectives_tools_sources \
-  tilexr_collective_perf -j8
+TILEXR_PROFILE_BUILD_DIR="$BUILD" \
+bash tests/collectives/run_collective_perf_multihost_suite.sh prepare
 ```
 
-If `cmake` is not in PATH on a remote host, use the full path that exists in that environment, for example:
+The helper uses `cmake` from `PATH` by default. To select a different executable without hardcoding paths in this
+runbook, set `CMAKE` before invoking the helper. If the host needs extra environment setup, set
+`TILEXR_PROFILE_ENV_SCRIPT` to a local script that exports the required CANN/Python variables.
 
 ```bash
-/root/anaconda3/envs/pt311/bin/cmake --build "$BUILD" --target tilexr_collective_perf -j8
-```
-
-Run guard tests on every host:
-
-```bash
-"$BUILD/tests/collectives/test_tilexr_collectives_kernel_ownership"
-"$BUILD/tests/collectives/test_tilexr_collectives_tools_sources"
-python3 "$REPO/tests/collectives/unit/test_collective_profile_report.py"
+CMAKE=cmake TILEXR_PROFILE_ENV_SCRIPT=/path/to/env.sh \
+TILEXR_PROFILE_BUILD_DIR="$BUILD" \
+bash tests/collectives/run_collective_perf_multihost_suite.sh prepare
 ```
 
 ## Run One Profile Case
 
-Launch from rank 0 host:
+Launch from rank 0 host with the same scripted helper:
 
 ```bash
 cd "$REPO/tests/collectives"
@@ -131,21 +115,8 @@ export TILEXR_MULTIHOST_PEERS="$PEERS"
 export TILEXR_COMM_ID='192.0.2.10:10067'
 export TILEXR_COLLECTIVES_RUN_TIMEOUT_SEC=300
 
-bash ./run_collective_perf_multihost.sh "$PROF/allgather-16m" "$BUILD/tests/collectives" \
-  --op allgather \
-  --min-bytes 16777216 --max-bytes 16777216 \
-  --datatype int32 --check 0 \
-  --warmup-iters 1 --iters 2 \
-  --profile 1 --profile-sample-every 1 --profile-ai-prompt 1
-```
-
-When this command is embedded in a larger SSH heredoc script, add `</dev/null` to prevent the child script from consuming the parent script input:
-
-```bash
-bash ./run_collective_perf_multihost.sh "$PROF/allgather-16m" "$BUILD/tests/collectives" \
-  --op allgather --min-bytes 16777216 --max-bytes 16777216 \
-  --datatype int32 --check 0 --warmup-iters 1 --iters 2 \
-  --profile 1 --profile-sample-every 1 --profile-ai-prompt 1 </dev/null
+TILEXR_PROFILE_BUILD_DIR="$BUILD" TILEXR_PROFILE_DIR="$PROF" \
+bash ./run_collective_perf_multihost_suite.sh case allgather-16m allgather 16777216
 ```
 
 ## Run All Standard Collective Cases
@@ -154,35 +125,15 @@ Use one profile directory per op. Multi-host runs should be serial because `TILE
 
 ```bash
 cd "$REPO/tests/collectives"
-
-run_case() {
-  local name="$1"
-  local op="$2"
-  local bytes="$3"
-  bash ./run_collective_perf_multihost.sh "$PROF/$name" "$BUILD/tests/collectives" \
-    --op "$op" \
-    --min-bytes "$bytes" --max-bytes "$bytes" \
-    --datatype int32 --check 0 \
-    --warmup-iters 1 --iters 2 \
-    --profile 1 --profile-sample-every 1 --profile-ai-prompt 1 </dev/null
-}
-
-run_case fine-allgather-big allgather 16777216
-run_case coarse-allreduce-big allreduce 16777216
-run_case coarse-reducescatter-big reducescatter 16777216
-run_case coarse-alltoall-big alltoall 16777216
-run_case coarse-broadcast-128m broadcast 134217728
+TILEXR_PROFILE_BUILD_DIR="$BUILD" TILEXR_PROFILE_DIR="$PROF" \
+bash ./run_collective_perf_multihost_suite.sh suite
 ```
 
 Optional smoke case:
 
 ```bash
-bash ./run_collective_perf_multihost.sh "$PROF/fine-profile-probe" "$BUILD/tests/collectives" \
-  --op profile-probe \
-  --min-bytes 1048576 --max-bytes 1048576 \
-  --datatype int8 --check 0 \
-  --warmup-iters 1 --iters 2 \
-  --profile 1 --profile-sample-every 1 --profile-ai-prompt 1 </dev/null
+TILEXR_PROFILE_BUILD_DIR="$BUILD" TILEXR_PROFILE_DIR="$PROF" \
+bash ./run_collective_perf_multihost_suite.sh profile-probe
 ```
 
 ## Expected Stage Names
@@ -207,41 +158,7 @@ Some stages may be absent for a specific rank role if a kernel path does not exe
 Run this on the host that owns the aggregated profile directory:
 
 ```bash
-python3 - "$PROF/allgather-16m" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-expected = {
-    "kernel_total",
-    "chunk_total",
-    "local_input_to_ipc",
-    "flag_poll_wait",
-    "peer_ipc_to_output",
-    "chunk_barrier",
-    "post_sync",
-}
-
-trace = json.loads((root / "trace.json").read_text(encoding="utf-8"))
-names = {
-    str(event.get("name", "")).rsplit("/", 1)[-1]
-    for event in trace.get("traceEvents", [])
-    if isinstance(event, dict)
-}
-missing = sorted(expected - names)
-
-diagnostics = []
-for rank_trace in root.glob("rank*/launch*/trace.json"):
-    data = json.loads(rank_trace.read_text(encoding="utf-8"))
-    diagnostics.extend(data.get("diagnostics", []))
-
-print("trace:", root / "trace.json")
-print("stages:", ",".join(sorted(names)))
-print("missing:", ",".join(missing) if missing else "none")
-print("diagnostics:", len(diagnostics))
-raise SystemExit(1 if missing or diagnostics else 0)
-PY
+bash "$REPO/tests/collectives/run_collective_perf_multihost_suite.sh" verify "$PROF/allgather-16m"
 ```
 
 Expected result:
@@ -362,7 +279,7 @@ Use this checklist before saying the profiling run succeeded:
 - Parse `trace.json` and verify expected stage suffixes.
 - Parse every `rank*/launch*/trace.json` and verify diagnostics count is zero.
 - Check `multihost_rank0.log` for the op summary and `errors=0`.
-- If the profile was launched through a parent SSH heredoc, use `</dev/null` on each nested `run_collective_perf_multihost.sh` call.
+- If the profile was launched through a parent SSH heredoc, prefer `run_collective_perf_multihost_suite.sh`; it redirects the nested multi-host launch input internally.
 - If a machine has a wrong system clock, rely on the helper clock offset path; do not manually edit trace timestamps.
 - If a run fails, inspect `multihost_rank*.log` first, then `find "$PWD" -name "plog"`.
 
@@ -370,7 +287,7 @@ Use this checklist before saying the profiling run succeeded:
 
 `cmake: command not found`
 
-Use the full conda cmake path, for example `/root/anaconda3/envs/pt311/bin/cmake`.
+Activate an environment that puts `cmake` on `PATH`, or set `CMAKE` to the desired executable name before invoking the helper.
 
 `Address already in use` or socket bind failure
 
