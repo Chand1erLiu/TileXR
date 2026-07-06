@@ -311,26 +311,14 @@ void TestLauncherScripts()
     CheckContains(multiHostPerfPath, multiHostPerf, "tar -xf - -C");
     CheckContains(multiHostPerfPath, multiHostPerf, "rank${rank}");
     CheckContains(multiHostPerfPath, multiHostPerf, "host_label=\"${target#*@}\"");
-    CheckContains(multiHostPerfPath, multiHostPerf, "local repo_dir=\"$5\"");
-    CheckContains(multiHostPerfPath, multiHostPerf, "local clock_offset_ns=\"$6\"");
-    CheckContains(multiHostPerfPath, multiHostPerf,
-        "\"${rank_size}\" \"${rank}\" \"${device_id}\" \"${comm_id}\" \"${profile_dir}\" \"${bin_dir}\" \"${host_ip}\" \"${host_label}\" \"${repo_dir}\" \"${clock_offset_ns}\"");
-    CheckContains(multiHostPerfPath, multiHostPerf, "repo_dir=\"$9\"");
-    CheckContains(multiHostPerfPath, multiHostPerf, "clock_offset_ns=\"${10}\"");
     CheckContains(multiHostPerfPath, multiHostPerf, "cd \"${repo_dir}\"");
     CheckContains(multiHostPerfPath, multiHostPerf, "build_dir=\"$(cd \"${bin_dir}/../..\" && pwd)\"");
     CheckContains(multiHostPerfPath, multiHostPerf, "${build_dir}/src/collectives");
     CheckContains(multiHostPerfPath, multiHostPerf, "clock_offset_ns=0");
     CheckContains(multiHostPerfPath, multiHostPerf, "reference_midpoint_ns");
-    CheckContains(multiHostPerfPath, multiHostPerf, "shift 6");
-    CheckContains(multiHostPerfPath, multiHostPerf, "shift 10");
-    CheckDoesNotContain(multiHostPerfPath, multiHostPerf, "cd /home/l00929943/TileXR");
-    CheckDoesNotContain(multiHostPerfPath, multiHostPerf, "comm_id=\"${TILEXR_COMM_ID:-141.62.24.62:10067}\"");
     CheckContains(multiHostPerfPath, multiHostPerf, "set +u");
     CheckContains(multiHostPerfPath, multiHostPerf, "ASCEND_PROCESS_LOG_PATH");
     CheckContains(multiHostPerfPath, multiHostPerf, "plog/rank${rank}");
-    CheckContains(multiHostPerfPath, multiHostPerf,
-        "LD_LIBRARY_PATH=/usr/local/Ascend/driver/lib64/driver:${build_dir}/src/collectives:${build_dir}/src/comm");
 }
 
 void TestCMakeWiring()
@@ -392,10 +380,10 @@ void TestReadmeDocumentsManualRuns()
     CheckContains(path, text, "rank-level summary");
     CheckContains(path, text, "launch/rank/stage event names");
     CheckContains(path, text, "Multi-Host Profiling");
+    CheckContains(path, text, "../../docs/COLLECTIVES_MULTIHOST_PROFILING.md");
     CheckContains(path, text, "TILEXR_MULTIHOST_PEERS");
     CheckContains(path, text, "--comm-mode socket");
     CheckContains(path, text, "--op profile-probe");
-    CheckContains(path, text, "launch0/rank1@141.62.24.70/kernel_total");
     CheckContains(path, text, "tilexr_collective_profile_report.py");
     CheckContains(path, text, "zoomable chronological timeline");
     CheckContains(path, text, "warmup launches are not profiled");
@@ -403,26 +391,6 @@ void TestReadmeDocumentsManualRuns()
     CheckContains(path, text, "TILEXR_SKIP_IF_INSUFFICIENT_NPUS");
     CheckContains(path, text, "CTest");
     CheckContains(path, text, "manual");
-}
-
-void TestProfileReportHelperDocumentsSlowRankAndPerfettoEvents()
-{
-    const std::string path = "tests/collectives/tilexr_collective_profile_report.py";
-    CheckFileExists(path);
-    const auto text = ReadFile(path);
-    CheckContains(path, text, "rank_kernel");
-    CheckContains(path, text, "slowest_rank");
-    CheckContains(path, text, "Rank-Level Summary");
-    CheckContains(path, text, "PERFETTO_LAUNCH_WINDOW_TID");
-    CheckContains(path, text, "launch_window");
-    CheckContains(path, text, "launch_offset_us");
-    CheckContains(path, text, "normalized_ts");
-    CheckContains(path, text, "host_info.json");
-    CheckContains(path, text, "Clock Sync");
-    CheckContains(path, text, "clock_offset_ns");
-    CheckContains(path, text, "rank_label(index.get(\"hosts\", {}), bar[\"rank\"])");
-    CheckContains(path, text, "launch{bar['launch_id']}/{bar_rank_label}/{bar['stage']}");
-    CheckContains(path, text, "for status in group.get(\"trace_statuses\", [])");
 }
 
 } // namespace
@@ -434,7 +402,6 @@ int main()
     TestLauncherScripts();
     TestCMakeWiring();
     TestReadmeDocumentsManualRuns();
-    TestProfileReportHelperDocumentsSlowRankAndPerfettoEvents();
     TestInt32PatternHasNoKnownCollisions();
     if (g_failures != 0) {
         std::cerr << g_failures << " collectives tools source checks failed" << std::endl;

@@ -125,7 +125,7 @@ python3 tilexr_collective_profile_report.py run/prof/collectives \
 ### Multi-Host Profiling
 
 For a command-first runbook that is easier for humans and AI agents to execute, see
-[`MULTIHOST_PROFILING_README.md`](MULTIHOST_PROFILING_README.md). It includes the peer environment, serial run
+[`COLLECTIVES_MULTIHOST_PROFILING.md`](../../docs/COLLECTIVES_MULTIHOST_PROFILING.md). It includes the peer environment, serial run
 templates for all standalone collective ops, trace verification snippets, Perfetto search hints, and common failure
 checks.
 
@@ -141,11 +141,11 @@ cross-host bandwidth.
 
 ```bash
 cd tests/collectives
-TILEXR_MULTIHOST_PEERS="0,root@141.62.24.62,141.62.24.62,0;1,root@141.62.24.70,141.62.24.70,0" \
-TILEXR_COMM_ID=141.62.24.62:10067 \
+TILEXR_MULTIHOST_PEERS="0,root@192.0.2.10,192.0.2.10,0;1,root@192.0.2.11,192.0.2.11,0" \
+TILEXR_COMM_ID=192.0.2.10:10067 \
 TILEXR_COLLECTIVES_RUN_TIMEOUT_SEC=300 \
-bash ./run_collective_perf_multihost.sh /home/l00929943/TileXR/run/prof/collectives-2host-profile-probe-62-70 \
-  /home/l00929943/TileXR/build-profile-950/tests/collectives \
+bash ./run_collective_perf_multihost.sh /path/to/TileXR/run/prof/collectives-2host-profile-probe \
+  /path/to/TileXR/build-profile-950/tests/collectives \
   --op profile-probe --min-bytes 4096 --max-bytes 4096 \
   --iters 2 --warmup-iters 1 --datatype int32 --check 0 \
   --profile 1 --profile-sample-every 1 --profile-ai-prompt 1
@@ -154,7 +154,7 @@ bash ./run_collective_perf_multihost.sh /home/l00929943/TileXR/run/prof/collecti
 The current report normalizes each rank/launch independently because cross-host device cycles are not assumed to be
 synchronized. Use the HTML rank-level summary to spot slow host/rank pairs, then drill into `rank<N>/launch<M>/`.
 The helper labels hosts from the SSH target/IP in `TILEXR_MULTIHOST_PEERS`, so Perfetto event names look like
-`launch0/rank1@141.62.24.70/kernel_total` in the example above.
+`launch0/rank1@192.0.2.11/kernel_total` in the example above.
 
 ## Skip Behavior
 

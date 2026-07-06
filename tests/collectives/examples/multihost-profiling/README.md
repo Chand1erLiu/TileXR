@@ -1,6 +1,6 @@
 # Multi-Host Profiling Example Artifacts
 
-This directory contains small example outputs from a real two-host standalone collectives profiling run. These files are documentation/test artifacts only; they are not consumed by the build.
+This directory contains sanitized example outputs from a two-host standalone collectives profiling run. These files are documentation/test artifacts only; they are not consumed by the build.
 
 ## Files
 

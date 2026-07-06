@@ -283,8 +283,8 @@ class CollectiveProfileReportTest(unittest.TestCase):
     def test_host_metadata_is_included_in_html_analysis_and_perfetto(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            write_host_info(root, 0, "host62", "141.62.24.62")
-            write_host_info(root, 1, "host70", "141.62.24.70")
+            write_host_info(root, 0, "host62", "192.0.2.10")
+            write_host_info(root, 1, "host70", "192.0.2.11")
             write_trace(root, 0, 0)
             write_trace(root, 1, 0)
 
@@ -293,22 +293,22 @@ class CollectiveProfileReportTest(unittest.TestCase):
 
             index = json.loads((root / "trace_index.json").read_text(encoding="utf-8"))
             self.assertEqual(index["hosts"]["0"]["host"], "host62")
-            self.assertEqual(index["hosts"]["0"]["ip"], "141.62.24.62")
+            self.assertEqual(index["hosts"]["0"]["ip"], "192.0.2.10")
             self.assertEqual(index["hosts"]["1"]["host"], "host70")
-            self.assertEqual(index["hosts"]["1"]["ip"], "141.62.24.70")
+            self.assertEqual(index["hosts"]["1"]["ip"], "192.0.2.11")
             rank0_bar = next(bar for bar in index["groups"][0]["bars"] if bar["rank"] == 0)
             rank1_bar = next(bar for bar in index["groups"][0]["bars"] if bar["rank"] == 1)
             self.assertEqual(rank0_bar["host"], "host62")
-            self.assertEqual(rank1_bar["host_ip"], "141.62.24.70")
+            self.assertEqual(rank1_bar["host_ip"], "192.0.2.11")
 
             analysis = (root / "analysis.md").read_text(encoding="utf-8")
-            self.assertIn("Hosts: rank0@host62(141.62.24.62), rank1@host70(141.62.24.70)", analysis)
+            self.assertIn("Hosts: rank0@host62(192.0.2.10), rank1@host70(192.0.2.11)", analysis)
             self.assertIn("Slowest rank: rank1@host70", analysis)
 
             html = (root / "report.html").read_text(encoding="utf-8")
             self.assertIn("Host", html)
             self.assertIn("rank1@host70", html)
-            self.assertIn("141.62.24.70", html)
+            self.assertIn("192.0.2.11", html)
 
             perfetto = json.loads((root / "perfetto_trace.json").read_text(encoding="utf-8"))
             self.assertIn(
@@ -321,7 +321,7 @@ class CollectiveProfileReportTest(unittest.TestCase):
                 if event.get("ph") == "X" and event.get("name") == "launch0/rank1@host70/kernel_total"
             )
             self.assertEqual(kernel["args"]["host"], "host70")
-            self.assertEqual(kernel["args"]["host_ip"], "141.62.24.70")
+            self.assertEqual(kernel["args"]["host_ip"], "192.0.2.11")
 
     def test_perfetto_trace_offsets_launches_and_adds_alignment_windows(self):
         with tempfile.TemporaryDirectory() as tmp:

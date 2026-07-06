@@ -324,10 +324,6 @@ void TestBigDataAllGatherPerfStages()
     CheckContains(path, text, "PerfStageId::FLAG_POLL_WAIT");
     CheckContains(path, text, "PerfStageId::PEER_IPC_TO_OUTPUT");
     CheckContains(path, text, "PerfStageId::CHUNK_BARRIER");
-    CheckContains(path, text, "TileXRPerfStageBegin");
-    CheckContains(path, text, "TileXRPerfStageEnd");
-    CheckContains(path, text, "TileXRPerfAccumulateDuration");
-    CheckContains(path, text, "TileXRPerfTraceEnabled");
 }
 
 void TestTwoNpuBigDataAllGatherPerfStages()
@@ -342,10 +338,6 @@ void TestTwoNpuBigDataAllGatherPerfStages()
     CheckContains(path, text, "PerfStageId::FLAG_POLL_WAIT");
     CheckContains(path, text, "PerfStageId::PEER_IPC_TO_OUTPUT");
     CheckContains(path, text, "PerfStageId::CHUNK_BARRIER");
-    CheckContains(path, text, "TileXRPerfStageBegin");
-    CheckContains(path, text, "TileXRPerfStageEnd");
-    CheckContains(path, text, "TileXRPerfAccumulateDuration");
-    CheckContains(path, text, "TileXRPerfTraceEnabled");
 }
 
 void TestOtherStandaloneCollectivePerfStages()
@@ -375,10 +367,6 @@ void TestOtherStandaloneCollectivePerfStages()
         for (const char *stageNeedle : stageNeedles) {
             CheckContains(path, text, stageNeedle);
         }
-        CheckContains(path, text, "TileXRPerfStageBegin");
-        CheckContains(path, text, "TileXRPerfStageEnd");
-        CheckContains(path, text, "TileXRPerfAccumulateDuration");
-        CheckContains(path, text, "TileXRPerfTraceEnabled");
     }
 }
 

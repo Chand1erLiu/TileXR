@@ -1,6 +1,6 @@
-# Standalone Collectives Multi-Host Profiling README
+# Standalone Collectives Multi-Host Profiling
 
-This README is a runbook for humans and AI agents. It explains how to run TileXR standalone collective profiling on two hosts, generate `trace.json`, and verify that the trace is useful in `https://ui.perfetto.dev`.
+This runbook explains how to run TileXR standalone collective profiling on two hosts, generate `trace.json`, and verify that the trace is useful in `https://ui.perfetto.dev`.
 
 ## Goal
 
@@ -28,7 +28,7 @@ Expected root-level outputs in each profile directory:
 
 Checked-in example output:
 
-- `tests/collectives/examples/multihost-profiling/fine-allgather-big/trace.json`: real aggregate `trace.json` from a two-host `allgather` profiling run. Use it to inspect the expected Perfetto schema without rerunning the benchmark.
+- `tests/collectives/examples/multihost-profiling/fine-allgather-big/trace.json`: sanitized aggregate `trace.json` from a two-host `allgather` profiling run. Use it to inspect the expected Perfetto schema without rerunning the benchmark.
 
 ## Mental Model
 
@@ -49,8 +49,8 @@ After all ranks finish, the helper copies rank traces back to the launcher host 
 Perfetto event names include launch, rank, host, and stage:
 
 ```text
-launch0/rank0@141.62.24.62/kernel_total
-launch0/rank1@141.62.24.70/flag_poll_wait
+launch0/rank0@192.0.2.10/kernel_total
+launch0/rank1@192.0.2.11/flag_poll_wait
 ```
 
 The script measures remote wall-clock offsets and passes `TILEXR_PROFILE_CLOCK_OFFSET_NS` to each rank. This compensates for host time skew, including cases where one machine has an incorrect system clock. Kernel stages are still derived from device-side timestamps per rank; use the aggregated timeline to compare stage shape and relative rank behavior, not as proof of globally synchronized device cycles.
@@ -60,10 +60,10 @@ The script measures remote wall-clock offsets and passes `TILEXR_PROFILE_CLOCK_O
 Assumptions used in examples:
 
 ```bash
-REPO=/home/l00929943/TileXR
+REPO=/path/to/TileXR
 BUILD=$REPO/build-profile-950
 PROF=$REPO/run/prof/collectives-2host
-PEERS='0,root@141.62.24.62,141.62.24.62,0;1,root@141.62.24.70,141.62.24.70,0'
+PEERS='0,root@192.0.2.10,192.0.2.10,0;1,root@192.0.2.11,192.0.2.11,0'
 ```
 
 Peer format:
@@ -77,7 +77,7 @@ Important environment variables:
 ```bash
 export TILEXR_MULTIHOST_REMOTE_REPO_DIR="$REPO"
 export TILEXR_MULTIHOST_PEERS="$PEERS"
-export TILEXR_COMM_ID='141.62.24.62:10067'
+export TILEXR_COMM_ID='192.0.2.10:10067'
 export TILEXR_COLLECTIVES_RUN_TIMEOUT_SEC=300
 ```
 
@@ -128,7 +128,7 @@ cd "$REPO/tests/collectives"
 
 export TILEXR_MULTIHOST_REMOTE_REPO_DIR="$REPO"
 export TILEXR_MULTIHOST_PEERS="$PEERS"
-export TILEXR_COMM_ID='141.62.24.62:10067'
+export TILEXR_COMM_ID='192.0.2.10:10067'
 export TILEXR_COLLECTIVES_RUN_TIMEOUT_SEC=300
 
 bash ./run_collective_perf_multihost.sh "$PROF/allgather-16m" "$BUILD/tests/collectives" \
@@ -301,14 +301,14 @@ Interpretation hints:
 Example from Windows PowerShell:
 
 ```powershell
-scp -r root@141.62.24.62:/home/l00929943/TileXR/run/prof/collectives-2host D:\l00929943\TileXR\run\prof\
+scp -r root@192.0.2.10:/path/to/TileXR/run/prof/collectives-2host D:\TileXR\run\prof\
 ```
 
 Open:
 
 ```text
-D:\l00929943\TileXR\run\prof\collectives-2host\<case>\trace.json
-D:\l00929943\TileXR\run\prof\collectives-2host\<case>\report.html
+D:\TileXR\run\prof\collectives-2host\<case>\trace.json
+D:\TileXR\run\prof\collectives-2host\<case>\report.html
 ```
 
 ## Regenerate Aggregate Reports

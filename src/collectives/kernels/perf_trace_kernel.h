@@ -198,6 +198,34 @@ __attribute__((always_inline)) inline __aicore__ void TileXRPerfStageEnd(
 
 #endif
 
+struct TileXRPerfStageBlock {
+    GM_ADDR trace = nullptr;
+    uint32_t rank = 0;
+    uint32_t core = 0;
+    PerfStageId stage = PerfStageId::KERNEL_TOTAL;
+    PerfBarrierPolicy endPolicy = PerfBarrierPolicy::NO_BARRIER;
+    TileXRPerfStageToken token {};
+
+    __attribute__((always_inline)) inline __aicore__ void End()
+    {
+        TileXRPerfStageEnd(trace, rank, core, stage, token, endPolicy);
+    }
+};
+
+__attribute__((always_inline)) inline __aicore__ TileXRPerfStageBlock TileXRPerfStageBlockBegin(
+    GM_ADDR trace, uint32_t rank, uint32_t core, PerfStageId stage, PerfBarrierPolicy beginPolicy,
+    PerfBarrierPolicy endPolicy)
+{
+    TileXRPerfStageBlock block {};
+    block.trace = trace;
+    block.rank = rank;
+    block.core = core;
+    block.stage = stage;
+    block.endPolicy = endPolicy;
+    block.token = TileXRPerfStageBegin(trace, stage, beginPolicy);
+    return block;
+}
+
 } // namespace TileXR
 
 #endif // TILEXR_COLLECTIVES_KERNEL_PERF_TRACE_KERNEL_H
