@@ -51,7 +51,8 @@ def write_trace(root, rank, launch, message_bytes=1024, schema="tilexr_perf_trac
     stats = [
         make_stat(rank, 0, "kernel_total", 0, base, 1000 + launch * 100 + rank * 10),
         make_stat(rank, 0, "flag_poll_wait", 4, base + 100, 320 + rank * 20, count=8, raw_cycles=160 + rank * 10, max_cycles=44),
-        make_stat(rank, 0, "peer_ipc_to_output", 5, base + 450, 420 + launch * 30, count=2, raw_cycles=400 + launch * 20, max_cycles=260),
+        make_stat(rank, 0, "local_input_to_ipc", 3, base + 250, 160 + launch * 20, count=2, raw_cycles=160 + launch * 20, max_cycles=100),
+        make_stat(rank, 0, "peer_ipc_to_output", 5, base + 450, 400 + launch * 30, count=2, raw_cycles=400 + launch * 20, max_cycles=260),
         make_stat(rank, 1, "kernel_total", 0, base + 25, 900 + launch * 80 + rank * 12),
     ]
     trace = {
@@ -204,6 +205,31 @@ class CollectiveProfileReportTest(unittest.TestCase):
             self.assertEqual(kernel["args"]["source"], "rank0/launch0/trace.json")
             self.assertEqual(kernel["args"]["message_bytes"], 1024)
             self.assertEqual(kernel["args"]["rank_size"], 2)
+
+            local_copy = next(
+                event
+                for event in perfetto["traceEvents"]
+                if event.get("ph") == "X" and event.get("name") == "launch0/rank0/local_input_to_ipc" and
+                event.get("pid") == 0 and event.get("tid") == 0
+            )
+            self.assertEqual(local_copy["args"]["src rank"], 0)
+            self.assertEqual(local_copy["args"]["dst rank"], -1)
+            self.assertEqual(local_copy["args"]["transport type"], "MEMORY")
+            self.assertEqual(local_copy["args"]["size(Byte)"], 1024)
+            self.assertAlmostEqual(local_copy["args"]["bandwidth(GB/s)"], 0.32)
+
+            peer_copy = next(
+                event
+                for event in perfetto["traceEvents"]
+                if event.get("ph") == "X" and event.get("name") == "launch0/rank0/peer_ipc_to_output" and
+                event.get("pid") == 0 and event.get("tid") == 0
+            )
+            self.assertEqual(peer_copy["args"]["src rank"], 1)
+            self.assertEqual(peer_copy["args"]["dst rank"], 0)
+            self.assertEqual(peer_copy["args"]["transport type"], "MEMORY")
+            self.assertEqual(peer_copy["args"]["size(Byte)"], 1024)
+            self.assertAlmostEqual(peer_copy["args"]["bandwidth(GB/s)"], 0.128)
+            self.assertEqual(peer_copy["args"]["communication_metrics_source"], "tilexr_profile_inferred")
 
     def test_rank_level_summary_highlights_slowest_rank(self):
         with tempfile.TemporaryDirectory() as tmp:
