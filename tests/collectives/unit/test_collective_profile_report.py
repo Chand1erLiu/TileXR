@@ -8,8 +8,10 @@ import unittest
 from pathlib import Path
 
 
-COLLECTIVES_DIR = Path(__file__).resolve().parents[1]
-HELPER = COLLECTIVES_DIR / "tilexr_collective_profile_report.py"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+COLLECTIVES_DIR = REPO_ROOT / "tests" / "collectives"
+HELPER = REPO_ROOT / "tools" / "collectives" / "tilexr_collective_profile_report.py"
+OLD_HELPER = COLLECTIVES_DIR / "tilexr_collective_profile_report.py"
 SINGLE_HOST_KERNEL_STAGES = [
     ("kernel_total", 0),
     ("chunk_total", 1),
@@ -126,6 +128,10 @@ def run_helper(root, *args):
 
 
 class CollectiveProfileReportTest(unittest.TestCase):
+    def test_profile_report_tool_lives_under_tools(self):
+        self.assertTrue(HELPER.exists(), HELPER)
+        self.assertFalse(OLD_HELPER.exists(), OLD_HELPER)
+
     def test_writes_chronological_multi_rank_report(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

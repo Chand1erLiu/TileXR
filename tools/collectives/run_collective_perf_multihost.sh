@@ -33,8 +33,8 @@ shift 2
 peers_spec="${TILEXR_MULTIHOST_PEERS:?TILEXR_MULTIHOST_PEERS is required}"
 timeout_sec="${TILEXR_COLLECTIVES_RUN_TIMEOUT_SEC:-600}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-helper="${script_dir}/tilexr_collective_profile_report.py"
 repo_dir="${TILEXR_MULTIHOST_REMOTE_REPO_DIR:-$(cd "${script_dir}/../.." && pwd)}"
+helper="${repo_dir}/tools/collectives/tilexr_collective_profile_report.py"
 rank_size=0
 warmup_iters=5
 measured_iters=20

@@ -63,7 +63,8 @@ write_profile_report_if_enabled() {
     return 0
   fi
   local root="${profile_dir:-run/prof/collectives}"
-  local helper="${script_dir}/tilexr_collective_profile_report.py"
+  local repo_dir="$(cd "${script_dir}/../.." && pwd)"
+  local helper="${repo_dir}/tools/collectives/tilexr_collective_profile_report.py"
   local python_cmd=""
   if command -v python3 >/dev/null 2>&1; then
     python_cmd="python3"
