@@ -14,6 +14,12 @@ HOST_SCHEMA = "tilexr_collective_profile_host.v1"
 RANK_LAUNCH_RE = re.compile(r"rank([0-9]+)[/\\]launch([0-9]+)[/\\]trace\.json$")
 PERFETTO_LAUNCH_GAP_US = 50.0
 PERFETTO_LAUNCH_WINDOW_TID = 1000000
+TILEXR_TRACE_TRANSPORT_MEMORY = "MEMORY"
+TILEXR_TRACE_TRANSPORT_UNKNOWN = "UNKNOWN"
+TILEXR_TRACE_INFERRED_METRICS_SOURCE = "tilexr_profile_inferred"
+TILEXR_COPY_STAGES = frozenset(("local_input_to_ipc", "peer_ipc_to_output"))
+TILEXR_OP_TYPE_ALL_GATHER = 3
+TILEXR_TRACE_UNKNOWN_RANK = -1
 
 
 def parse_args():
@@ -184,6 +190,66 @@ def cycles_to_us(cycles, divisor):
     if divisor == 0:
         return 0.0
     return float(cycles) / float(divisor)
+
+
+def bandwidth_gbps(size_bytes, duration_us):
+    if size_bytes <= 0 or duration_us <= 0:
+        return 0.0
+    return round((float(size_bytes) / float(duration_us)) / 1000.0, 6)
+
+
+def communication_stage_total_bytes(stage, group):
+    message_bytes = as_int(group.get("message_bytes"))
+    if stage not in TILEXR_COPY_STAGES or message_bytes <= 0:
+        return 0
+    if stage == "peer_ipc_to_output" and as_int(group.get("op_type")) == TILEXR_OP_TYPE_ALL_GATHER:
+        rank_size = max(0, as_int(group.get("rank_size")))
+        return message_bytes * max(0, rank_size - 1)
+    return message_bytes
+
+
+def communication_task_size_bytes(stage, group, active_stage_bars):
+    stage_total_bytes = communication_stage_total_bytes(stage, group)
+    if stage_total_bytes <= 0 or active_stage_bars <= 0:
+        return 0
+    return int(stage_total_bytes // active_stage_bars)
+
+
+def communication_transport_type(stage):
+    if stage in TILEXR_COPY_STAGES:
+        return TILEXR_TRACE_TRANSPORT_MEMORY
+    return TILEXR_TRACE_TRANSPORT_UNKNOWN
+
+
+def communication_metadata_for_bar(bar, group, active_stage_bars):
+    stage = bar["stage"]
+    rank = bar["rank"]
+    src_rank = rank
+    dst_rank = TILEXR_TRACE_UNKNOWN_RANK
+    if stage == "peer_ipc_to_output":
+        src_rank = TILEXR_TRACE_UNKNOWN_RANK
+        dst_rank = rank
+
+    size_bytes = communication_task_size_bytes(stage, group, active_stage_bars)
+    return {
+        "src rank": src_rank,
+        "dst rank": dst_rank,
+        "transport type": communication_transport_type(stage),
+        "size(Byte)": size_bytes,
+        "bandwidth(GB/s)": bandwidth_gbps(size_bytes, bar["sum_us"]),
+        "communication_metrics_source": TILEXR_TRACE_INFERRED_METRICS_SOURCE,
+    }
+
+
+def annotate_communication_metadata(group):
+    active_stage_counts = defaultdict(int)
+    for bar in group["bars"]:
+        if bar["duration_us"] > 0:
+            active_stage_counts[(bar["launch_id"], bar["rank"], bar["stage"])] += 1
+
+    for bar in group["bars"]:
+        key = (bar["launch_id"], bar["rank"], bar["stage"])
+        bar.update(communication_metadata_for_bar(bar, group, active_stage_counts.get(key, 0)))
 
 
 def rank_host_info(hosts, rank):
@@ -400,6 +466,7 @@ def build_index(root, args):
             ],
             "bars": normalized_bars(entries, root, hosts),
         }
+        annotate_communication_metadata(group)
         group["summary"] = summarize_group(group)
         groups.append(group)
 
@@ -727,6 +794,12 @@ def render_perfetto_trace(index):
                     "op_name": group["op_name"],
                     "message_bytes": group["message_bytes"],
                     "rank_size": group["rank_size"],
+                    "src rank": bar["src rank"],
+                    "dst rank": bar["dst rank"],
+                    "transport type": bar["transport type"],
+                    "size(Byte)": bar["size(Byte)"],
+                    "bandwidth(GB/s)": bar["bandwidth(GB/s)"],
+                    "communication_metrics_source": bar["communication_metrics_source"],
                 },
             })
 

@@ -335,7 +335,7 @@ ctest --test-dir build-collectives --output-on-failure
 
 These checks verify headers, the library split, scripts, docs, and tool wiring without an NPU. Physical multi-NPU runs are manual.
 
-Manual multi-NPU correctness and performance tools live under `tests/collectives/`:
+Manual multi-NPU correctness checks live under `tests/collectives/`, while performance and profiling tools live under `tools/collectives/`:
 
 ```bash
 cd tests/collectives
@@ -346,7 +346,7 @@ LD_LIBRARY_PATH="$TILEXR_LIBDIR:${LD_LIBRARY_PATH:-}" \
   ./run_collectives_correctness.sh 2 16 0 ../../install/bin allgather
 
 LD_LIBRARY_PATH="$TILEXR_LIBDIR:${LD_LIBRARY_PATH:-}" \
-  ./run_collective_perf.sh 2 0 ../../install/bin \
+  ../../tools/collectives/run_collective_perf.sh 2 0 ../../install/bin \
     --op allgather --min-bytes 4 --max-bytes 4096 \
     --step-factor 2 --iters 20 --warmup-iters 5 \
     --datatype int32 --check 1
@@ -364,7 +364,7 @@ cmake -S . -B build-profile \
 cmake --build build-profile --target tilexr_collective_perf -j"$(nproc)"
 
 cd tests/collectives
-./run_collective_perf.sh 2 0 ../../build-profile/tests/collectives \
+../../tools/collectives/run_collective_perf.sh 2 0 ../../build-profile/tests/collectives \
   --op allgather --min-bytes 67108864 --max-bytes 67108864 \
   --profile 1 --profile-dir run/prof/collectives --profile-ai-prompt 1
 ```
@@ -380,7 +380,7 @@ run/prof/collectives/analysis.md
 run/prof/collectives/ai_prompt.md   # only when prompt export is enabled
 ```
 
-The aggregate `report.html` keeps the bottleneck-first summary and adds a zoomable chronological timeline across ranks, cores, and sampled measured launches, with links back to each per-launch report. Warmup iterations remain controlled by `--warmup-iters` and are reported as metadata; warmup launches are not profiled by this path. Existing profile directories can be re-analyzed with `tests/collectives/tilexr_collective_profile_report.py`.
+The aggregate `report.html` keeps the bottleneck-first summary and adds a zoomable chronological timeline across ranks, cores, and sampled measured launches, with links back to each per-launch report. Warmup iterations remain controlled by `--warmup-iters` and are reported as metadata; warmup launches are not profiled by this path. Existing profile directories can be re-analyzed with `tools/collectives/tilexr_collective_profile_report.py`.
 
 See [tests/collectives/README.md](tests/collectives/README.md) for script arguments, skip behavior, timeout handling, topology limitations, and profiling report details.
 
