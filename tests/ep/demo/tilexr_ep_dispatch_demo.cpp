@@ -4,7 +4,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <iostream>
 #include <string>
 #include <thread>
@@ -16,6 +15,7 @@
 #include <unistd.h>
 
 #include "acl/acl.h"
+#include "ep_transport_route.h"
 #include "tilexr_api.h"
 #include "tilexr_ep.h"
 #include "tilexr_transport.h"
@@ -69,12 +69,6 @@ bool EnvEnabled(const char *name)
 {
     const char *value = std::getenv(name);
     return value != nullptr && value[0] != '\0' && std::string(value) != "0";
-}
-
-bool TransportNeedsUdmaRegistration()
-{
-    const char *mode = std::getenv("TILEXR_TRANSPORT_MODE");
-    return mode == nullptr || std::strcmp(mode, "memory") != 0;
 }
 
 int GetEnvInt(const char *name, int fallback)
@@ -944,9 +938,23 @@ int main(int argc, char **argv)
         Cleanup(comm, stream, deviceId, deviceSet, aclReady, buffers);
         return 1;
     }
-    const bool crossNode = commArgsHost != nullptr && commArgsHost->localRankSize > 0 &&
+    if (commArgsHost == nullptr) {
+        std::cerr << "TileXRGetCommArgsHost returned null communicator arguments" << std::endl;
+        Cleanup(comm, stream, deviceId, deviceSet, aclReady, buffers);
+        return 1;
+    }
+
+    const bool crossNode = commArgsHost->localRankSize > 0 &&
         commArgsHost->localRankSize < commArgsHost->rankSize;
-    const bool useRegisteredWorkspace = TransportNeedsUdmaRegistration();
+    TileXR::TileXRTransportKind resolvedTransport = TileXR::TileXRTransportKind::MEMORY;
+    if (!CheckTileXR(TileXREp::TileXREpResolveTransportFromEnv(*commArgsHost,
+            static_cast<uint64_t>(dispatchWindowBytes), &resolvedTransport),
+            "TileXREpResolveTransportFromEnv")) {
+        Cleanup(comm, stream, deviceId, deviceSet, aclReady, buffers);
+        return 1;
+    }
+    const bool useRegisteredWorkspace =
+        resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA;
     if (useRegisteredWorkspace &&
         !CheckTileXR(TileXRUDMARegister(comm, static_cast<GM_ADDR>(workspaceDev), workspaceBytes,
             &workspaceHandle), "TileXRUDMARegister workspace")) {
@@ -957,11 +965,9 @@ int main(int argc, char **argv)
         g_workspaceHandle = workspaceHandle;
         g_workspaceRegistered = true;
     }
-    const TileXR::TileXRTransportKind autoTransport = TileXR::TileXRSelectAutoTransport(
-        commArgsHost, static_cast<uint64_t>(dispatchWindowBytes));
     std::cout << "rank " << rank << " bs=" << config.bs
               << " dispatchWindowBytes=" << dispatchWindowBytes
-              << " autoTransport=" << (autoTransport == TileXR::TileXRTransportKind::DIRECT_URMA ?
+              << " transport=" << (resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA ?
                     "direct_urma" : "memory") << std::endl;
 
     const std::vector<uint16_t> hostExpertOut(expandedElements, kFp16One);

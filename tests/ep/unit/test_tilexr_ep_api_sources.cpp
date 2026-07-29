@@ -273,13 +273,13 @@ void TestDispatchDemoRegistersAlignedUdmaWorkspace()
         "workspaceDev = reinterpret_cast<void *>(AlignAddress(");
     CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
         "TileXRUDMARegister(comm, static_cast<GM_ADDR>(workspaceDev), workspaceBytes");
-    CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo, "TransportNeedsUdmaRegistration");
+    CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo, "#include \"ep_transport_route.h\"");
     CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
-        "const bool useRegisteredWorkspace = TransportNeedsUdmaRegistration()");
+        "TileXREp::TileXREpResolveTransportFromEnv(*commArgsHost,");
+    CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
+        "resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA");
     CheckNotContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
-        "crossNode && TransportNeedsUdmaRegistration()");
-    CheckNotContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
-        "if (crossNode && !CheckTileXR(TileXRUDMARegister");
+        "TransportNeedsUdmaRegistration");
     CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo, "EpRequiredWorkspaceBytes");
 }
 

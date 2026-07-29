@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <cstdint>
 #include <iostream>
 
@@ -31,6 +32,19 @@ TileXR::CommArgs MakeArgs(bool directUrmaAvailable)
         args.udmaRegistryPtr = reinterpret_cast<GM_ADDR>(0x200000);
     }
     return args;
+}
+
+void SetTransportMode(const char *value)
+{
+#ifdef _WIN32
+    _putenv_s("TILEXR_TRANSPORT_MODE", value == nullptr ? "" : value);
+#else
+    if (value == nullptr) {
+        unsetenv("TILEXR_TRANSPORT_MODE");
+    } else {
+        setenv("TILEXR_TRANSPORT_MODE", value, 1);
+    }
+#endif
 }
 
 void TestParseTransportMode()
@@ -96,6 +110,31 @@ void TestSameNodeUsesFourMiBThreshold()
     CHECK_EQ(transport, TileXR::TileXRTransportKind::DIRECT_URMA);
 }
 
+void TestResolveTransportFromEnvironment()
+{
+    const TileXR::CommArgs noUdmaArgs = MakeArgs(false);
+    TileXR::TileXRTransportKind transport = TileXR::TileXRTransportKind::DIRECT_URMA;
+
+    SetTransportMode(nullptr);
+    CHECK_EQ(TileXREp::TileXREpResolveTransportFromEnv(noUdmaArgs, 8ULL * 1024ULL * 1024ULL,
+        &transport), TileXR::TILEXR_SUCCESS);
+    CHECK_EQ(transport, TileXR::TileXRTransportKind::MEMORY);
+
+    SetTransportMode("auto");
+    CHECK_EQ(TileXREp::TileXREpResolveTransportFromEnv(noUdmaArgs, 8ULL * 1024ULL * 1024ULL,
+        &transport), TileXR::TILEXR_SUCCESS);
+    CHECK_EQ(transport, TileXR::TileXRTransportKind::MEMORY);
+
+    SetTransportMode("direct_urma");
+    CHECK_EQ(TileXREp::TileXREpResolveTransportFromEnv(noUdmaArgs, 8ULL * 1024ULL * 1024ULL,
+        &transport), TileXR::TILEXR_ERROR_NOT_INITIALIZED);
+
+    SetTransportMode("invalid");
+    CHECK_EQ(TileXREp::TileXREpResolveTransportFromEnv(noUdmaArgs, 8ULL * 1024ULL * 1024ULL,
+        &transport), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+    SetTransportMode(nullptr);
+}
+
 } // namespace
 
 int main()
@@ -103,6 +142,7 @@ int main()
     TestParseTransportMode();
     TestResolveForcedTransport();
     TestSameNodeUsesFourMiBThreshold();
+    TestResolveTransportFromEnvironment();
     if (g_failures != 0) {
         std::cerr << g_failures << " TileXR EP transport route checks failed" << std::endl;
         return 1;

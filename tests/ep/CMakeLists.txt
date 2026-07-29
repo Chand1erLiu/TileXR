@@ -147,6 +147,7 @@ if(BUILD_TILEXR_EP_DEMO)
 
     target_include_directories(tilexr_ep_dispatch_demo PRIVATE
         "${TILEXR_INSTALL_INCLUDE_SEARCH_DIR}"
+        "${TILEXR_ROOT}/src/ep/host"
         "${ASCEND_HOME_PATH}/${ARCH}-linux/include"
         "${ASCEND_HOME_PATH}/${ARCH}-linux/pkg_inc"
         "${ASCEND_HOME_PATH}/${ARCH}-linux/pkg_inc/runtime"
