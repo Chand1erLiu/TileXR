@@ -99,8 +99,8 @@ int TileXREpPrepareLaunchContext(const EpDispatchParams &params, EpHostLaunchCon
         return ret;
     }
 
-    ret = TileXREpResolveTransportFromEnv(*context->hostArgs,
-        static_cast<uint64_t>(context->window.totalBytes), &context->transport);
+    ret = TileXREpResolveTransportForWorkspaceFromEnv(*context->hostArgs,
+        static_cast<uint64_t>(context->window.totalBytes), params.workspace, &context->transport);
     if (ret != TileXR::TILEXR_SUCCESS) {
         *context = EpHostLaunchContext {};
         return ret;
@@ -156,8 +156,8 @@ int TileXREpPrepareCombineLaunchContext(const EpCombineParams &params, EpHostLau
         return ret;
     }
 
-    ret = TileXREpResolveTransportFromEnv(*context->hostArgs,
-        static_cast<uint64_t>(context->window.totalBytes), &context->transport);
+    ret = TileXREpResolveTransportForWorkspaceFromEnv(*context->hostArgs,
+        static_cast<uint64_t>(context->window.totalBytes), params.workspace, &context->transport);
     if (ret != TileXR::TILEXR_SUCCESS) {
         *context = EpHostLaunchContext {};
         return ret;

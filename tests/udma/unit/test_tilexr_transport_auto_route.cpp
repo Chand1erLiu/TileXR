@@ -132,6 +132,31 @@ void TestAutoFallsBackToMemoryWhenUrmaRegistryMissing()
              TileXR::TileXRTransportKind::MEMORY);
 }
 
+void TestDirectUrmaPeerRoutabilityMatchesAllocatedResources()
+{
+    auto args = MakeArgs(true);
+    args.rank = 0;
+    args.rankSize = 4;
+    args.localRankSize = 2;
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 0), false);
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 1), false);
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 2), true);
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 3), true);
+
+    args.rankSize = 2;
+    args.localRankSize = 2;
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 1), true);
+
+    args.localRankSize = 0;
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 1), false);
+
+    args = MakeArgs(false);
+    args.rank = 0;
+    args.rankSize = 2;
+    args.localRankSize = 1;
+    CHECK_EQ(TileXR::TileXRDirectUrmaPeerRoutable(&args, 1), false);
+}
+
 } // namespace
 
 int main()
@@ -147,6 +172,7 @@ int main()
     TestAutoFallsBackToMemoryWhenUrmaUnavailable();
     TestAutoFallsBackToMemoryWhenUrmaInfoMissing();
     TestAutoFallsBackToMemoryWhenUrmaRegistryMissing();
+    TestDirectUrmaPeerRoutabilityMatchesAllocatedResources();
     if (g_failures != 0) {
         std::cerr << g_failures << " TileXR transport auto route checks failed" << std::endl;
         return 1;

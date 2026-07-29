@@ -947,25 +947,32 @@ int main(int argc, char **argv)
 
     const bool crossNode = commArgsHost->localRankSize > 0 &&
         commArgsHost->localRankSize < commArgsHost->rankSize;
-    TileXR::TileXRTransportKind resolvedTransport = TileXR::TileXRTransportKind::MEMORY;
-    if (!CheckTileXR(TileXREp::TileXREpResolveTransportFromEnv(*commArgsHost,
-            static_cast<uint64_t>(dispatchWindowBytes), &resolvedTransport),
-            "TileXREpResolveTransportFromEnv")) {
+    TileXREp::EpTransportMode requestedTransport = TileXREp::EpTransportMode::AUTO;
+    if (!CheckTileXR(TileXREp::TileXREpParseTransportMode(
+            std::getenv("TILEXR_TRANSPORT_MODE"), &requestedTransport), "TileXREpParseTransportMode")) {
         Cleanup(comm, stream, deviceId, deviceSet, aclReady, buffers);
         return 1;
     }
-    const bool useRegisteredWorkspace =
-        resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA;
-    if (useRegisteredWorkspace &&
+    const bool registerWorkspace =
+        TileXREp::TileXREpShouldRegisterWorkspace(requestedTransport, *commArgsHost);
+    if (registerWorkspace &&
         !CheckTileXR(TileXRUDMARegister(comm, static_cast<GM_ADDR>(workspaceDev), workspaceBytes,
             &workspaceHandle), "TileXRUDMARegister workspace")) {
         Cleanup(comm, stream, deviceId, deviceSet, aclReady, buffers);
         return 1;
     }
-    if (useRegisteredWorkspace) {
+    if (registerWorkspace) {
         g_workspaceHandle = workspaceHandle;
         g_workspaceRegistered = true;
     }
+    TileXR::TileXRTransportKind resolvedTransport = TileXR::TileXRTransportKind::MEMORY;
+    if (!CheckTileXR(TileXREp::TileXREpResolveTransport(requestedTransport, *commArgsHost,
+            static_cast<uint64_t>(dispatchWindowBytes), &resolvedTransport), "TileXREpResolveTransport")) {
+        Cleanup(comm, stream, deviceId, deviceSet, aclReady, buffers);
+        return 1;
+    }
+    const bool useRegisteredWorkspace =
+        resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA;
     std::cout << "rank " << rank << " bs=" << config.bs
               << " dispatchWindowBytes=" << dispatchWindowBytes
               << " transport=" << (resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA ?

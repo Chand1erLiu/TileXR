@@ -266,6 +266,18 @@ void TestHybridUdmaOnlyBuildsRemotePeerResources()
         "peer / options_.localRankSize != options_.rank / options_.localRankSize");
 }
 
+void TestPublicUdmaWrappersRejectUnroutablePeers()
+{
+    const std::string path = "src/include/tilexr_udma.h";
+    const auto text = ReadFile(path);
+    CheckContains(path, text, "UDMAPeerEnabled(args, targetRank)");
+    CheckContains(path, text, "UDMAPeerEnabled(args, sourceRank)");
+
+    const std::string demoPath = "tests/udma/demo/tilexr_udma_demo_kernel.cpp";
+    const auto demo = ReadFile(demoPath);
+    CheckContains(demoPath, demo, "bool enabled = TileXR::UDMAAllPeersEnabled(args);");
+}
+
 } // namespace
 
 int main()
@@ -281,6 +293,7 @@ int main()
     TestUdmaHostTargetsExcludeCannDevlib();
     TestSocketExchangeHandlesPartialIo();
     TestHybridUdmaOnlyBuildsRemotePeerResources();
+    TestPublicUdmaWrappersRejectUnroutablePeers();
     if (g_failures != 0) {
         std::cerr << g_failures << " UDMA source guard checks failed" << std::endl;
         return 1;

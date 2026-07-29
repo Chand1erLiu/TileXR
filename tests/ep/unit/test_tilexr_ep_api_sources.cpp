@@ -275,7 +275,9 @@ void TestDispatchDemoRegistersAlignedUdmaWorkspace()
         "TileXRUDMARegister(comm, static_cast<GM_ADDR>(workspaceDev), workspaceBytes");
     CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo, "#include \"ep_transport_route.h\"");
     CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
-        "TileXREp::TileXREpResolveTransportFromEnv(*commArgsHost,");
+        "TileXREp::TileXREpShouldRegisterWorkspace(requestedTransport, *commArgsHost)");
+    CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
+        "TileXREp::TileXREpResolveTransport(requestedTransport, *commArgsHost,");
     CheckContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,
         "resolvedTransport == TileXR::TileXRTransportKind::DIRECT_URMA");
     CheckNotContains("tests/ep/demo/tilexr_ep_dispatch_demo.cpp", demo,

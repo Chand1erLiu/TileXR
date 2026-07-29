@@ -9,9 +9,6 @@
 #include <cstdint>
 
 #include "comm_args.h"
-#if TILEXR_ASCENDC_AICORE_COMPILE
-#include "tilexr_udma.h"
-#endif
 
 namespace TileXR {
 
@@ -33,12 +30,30 @@ constexpr uint64_t TILEXR_AUTO_CROSS_NODE_DIRECT_URMA_THRESHOLD_BYTES = 128ULL *
 constexpr uint64_t TILEXR_AUTO_DIRECT_URMA_THRESHOLD_BYTES =
     TILEXR_AUTO_SAME_NODE_DIRECT_URMA_THRESHOLD_BYTES;
 
-TILEXR_TRANSPORT_INLINE bool TileXRDirectUrmaAvailable(const TILEXR_TRANSPORT_GM CommArgs* args)
+TILEXR_TRANSPORT_INLINE bool TileXRDirectUrmaCapable(const TILEXR_TRANSPORT_GM CommArgs* args)
 {
     return args != nullptr &&
            ((args->extraFlag & ExtraFlag::UDMA) != 0) &&
-           args->udmaInfoPtr != nullptr &&
-           args->udmaRegistryPtr != nullptr;
+           args->udmaInfoPtr != nullptr;
+}
+
+TILEXR_TRANSPORT_INLINE bool TileXRDirectUrmaAvailable(const TILEXR_TRANSPORT_GM CommArgs* args)
+{
+    return TileXRDirectUrmaCapable(args) && args->udmaRegistryPtr != nullptr;
+}
+
+TILEXR_TRANSPORT_INLINE bool TileXRDirectUrmaPeerRoutable(
+    const TILEXR_TRANSPORT_GM CommArgs* args, int targetRank)
+{
+    if (!TileXRDirectUrmaCapable(args) || args->rankSize <= 1 || args->rank < 0 ||
+        args->rank >= args->rankSize || targetRank < 0 || targetRank >= args->rankSize ||
+        targetRank == args->rank || args->localRankSize <= 0) {
+        return false;
+    }
+    if (args->localRankSize >= args->rankSize) {
+        return true;
+    }
+    return targetRank / args->localRankSize != args->rank / args->localRankSize;
 }
 
 TILEXR_TRANSPORT_INLINE bool TileXRCommSpansNodes(const TILEXR_TRANSPORT_GM CommArgs* args)

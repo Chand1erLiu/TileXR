@@ -430,6 +430,38 @@ void TestDirectTransportChecksRegistryOnSameNode()
     SetTransportMode(nullptr);
 }
 
+void TestAutoWithoutWorkspaceStaysOnMemory()
+{
+    TileXREp::EpDispatchParams params = ValidParams();
+    params.bs = 64;
+    params.h = 128;
+    params.workspace = nullptr;
+    TileXR::CommArgs args = CrossNodeUdmaCommArgs();
+    g_commArgs = &args;
+    g_registry = nullptr;
+    g_registryCalls = 0;
+    SetTransportMode("auto");
+
+    TileXREp::EpHostLaunchContext context {};
+    CheckInt("auto without workspace uses memory",
+        TileXREp::TileXREpPrepareLaunchContext(params, &context), TileXR::TILEXR_SUCCESS);
+    CheckInt("auto without workspace saves memory route", static_cast<int>(context.transport),
+        static_cast<int>(TileXR::TileXRTransportKind::MEMORY));
+    CheckInt("auto without workspace skips registry", g_registryCalls, 0);
+
+    TileXREp::EpCombineParams combineParams = ValidCombineParams();
+    combineParams.bs = 64;
+    combineParams.h = 128;
+    combineParams.workspace = nullptr;
+    g_registryCalls = 0;
+    CheckInt("auto combine without workspace uses memory",
+        TileXREp::TileXREpPrepareCombineLaunchContext(combineParams, &context), TileXR::TILEXR_SUCCESS);
+    CheckInt("auto combine without workspace saves memory route", static_cast<int>(context.transport),
+        static_cast<int>(TileXR::TileXRTransportKind::MEMORY));
+    CheckInt("auto combine without workspace skips registry", g_registryCalls, 0);
+    SetTransportMode(nullptr);
+}
+
 void TestV2CapabilityValidation()
 {
     TileXREp::EpDispatchParams params = ValidV2Params();
@@ -586,6 +618,7 @@ int main()
     TestLaunchContextUsesResolvedTransport();
     TestCombineContextUsesRouteAwarePeerMappings();
     TestDirectTransportChecksRegistryOnSameNode();
+    TestAutoWithoutWorkspaceStaysOnMemory();
     TestV2CapabilityValidation();
     return g_failures == 0 ? 0 : 1;
 }

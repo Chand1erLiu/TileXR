@@ -34,6 +34,16 @@ TileXR::CommArgs MakeArgs(bool directUrmaAvailable)
     return args;
 }
 
+TileXR::CommArgs MakeUdmaCapableArgs()
+{
+    TileXR::CommArgs args {};
+    args.rankSize = 2;
+    args.localRankSize = 1;
+    args.extraFlag |= TileXR::ExtraFlag::UDMA;
+    args.udmaInfoPtr = reinterpret_cast<GM_ADDR>(0x100000);
+    return args;
+}
+
 void SetTransportMode(const char *value)
 {
 #ifdef _WIN32
@@ -135,6 +145,17 @@ void TestResolveTransportFromEnvironment()
     SetTransportMode(nullptr);
 }
 
+void TestDemoRegistrationDecisionUsesCapabilityBeforeRegistry()
+{
+    const TileXR::CommArgs noUdmaArgs = MakeArgs(false);
+    const TileXR::CommArgs capableArgs = MakeUdmaCapableArgs();
+
+    CHECK_EQ(TileXREp::TileXREpShouldRegisterWorkspace(TileXREp::EpTransportMode::AUTO, capableArgs), true);
+    CHECK_EQ(TileXREp::TileXREpShouldRegisterWorkspace(TileXREp::EpTransportMode::DIRECT_URMA, capableArgs), true);
+    CHECK_EQ(TileXREp::TileXREpShouldRegisterWorkspace(TileXREp::EpTransportMode::MEMORY, capableArgs), false);
+    CHECK_EQ(TileXREp::TileXREpShouldRegisterWorkspace(TileXREp::EpTransportMode::AUTO, noUdmaArgs), false);
+}
+
 } // namespace
 
 int main()
@@ -143,6 +164,7 @@ int main()
     TestResolveForcedTransport();
     TestSameNodeUsesFourMiBThreshold();
     TestResolveTransportFromEnvironment();
+    TestDemoRegistrationDecisionUsesCapabilityBeforeRegistry();
     if (g_failures != 0) {
         std::cerr << g_failures << " TileXR EP transport route checks failed" << std::endl;
         return 1;

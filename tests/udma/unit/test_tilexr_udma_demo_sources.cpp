@@ -76,7 +76,7 @@ int main()
 
     const std::string kernelPath = "tests/udma/demo/tilexr_udma_demo_kernel.cpp";
     const std::string kernel = ReadFile(kernelPath);
-    CheckContains(kernelPath, kernel, "UDMARegistryEnabled");
+    CheckContains(kernelPath, kernel, "UDMAAllPeersEnabled");
     CheckContains(kernelPath, kernel, "UDMAPutNbi<int32_t>");
     CheckContains(kernelPath, kernel, "UDMAPutSignalNbi<int32_t>");
     CheckContains(kernelPath, kernel, "UDMAQuiet");

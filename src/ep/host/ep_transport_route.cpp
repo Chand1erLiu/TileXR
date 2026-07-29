@@ -27,6 +27,11 @@ int TileXREpParseTransportMode(const char *value, EpTransportMode *mode)
     return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
 }
 
+bool TileXREpShouldRegisterWorkspace(EpTransportMode mode, const TileXR::CommArgs &args)
+{
+    return mode != EpTransportMode::MEMORY && TileXR::TileXRDirectUrmaCapable(&args);
+}
+
 int TileXREpResolveTransport(EpTransportMode mode, const TileXR::CommArgs &args, uint64_t bytes,
     TileXR::TileXRTransportKind *transport)
 {
@@ -60,6 +65,20 @@ int TileXREpResolveTransportFromEnv(const TileXR::CommArgs &args, uint64_t bytes
     int ret = TileXREpParseTransportMode(std::getenv("TILEXR_TRANSPORT_MODE"), &mode);
     if (ret != TileXR::TILEXR_SUCCESS) {
         return ret;
+    }
+    return TileXREpResolveTransport(mode, args, bytes, transport);
+}
+
+int TileXREpResolveTransportForWorkspaceFromEnv(const TileXR::CommArgs &args, uint64_t bytes,
+    const void *workspace, TileXR::TileXRTransportKind *transport)
+{
+    EpTransportMode mode = EpTransportMode::AUTO;
+    int ret = TileXREpParseTransportMode(std::getenv("TILEXR_TRANSPORT_MODE"), &mode);
+    if (ret != TileXR::TILEXR_SUCCESS) {
+        return ret;
+    }
+    if (mode == EpTransportMode::AUTO && workspace == nullptr) {
+        mode = EpTransportMode::MEMORY;
     }
     return TileXREpResolveTransport(mode, args, bytes, transport);
 }
