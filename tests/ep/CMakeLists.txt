@@ -74,6 +74,7 @@ find_path(TILEXR_EP_ACL_BASE_INCLUDE_DIR acl/acl_base.h
 if(NOT TILEXR_EP_ACL_BASE_INCLUDE_DIR)
     set(TILEXR_EP_ACL_STUB_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_acl_stub")
     file(MAKE_DIRECTORY "${TILEXR_EP_ACL_STUB_DIR}/acl")
+    file(MAKE_DIRECTORY "${TILEXR_EP_ACL_STUB_DIR}/runtime")
     file(WRITE "${TILEXR_EP_ACL_STUB_DIR}/acl/acl_base.h" [=[
 #ifndef TILEXR_EP_TEST_ACL_BASE_H
 #define TILEXR_EP_TEST_ACL_BASE_H
@@ -100,6 +101,13 @@ aclError aclrtMemcpyAsync(void *dst, size_t destMax, const void *src,
 #ifdef __cplusplus
 }
 #endif
+#endif
+]=])
+    file(WRITE "${TILEXR_EP_ACL_STUB_DIR}/runtime/kernel.h" [=[
+#ifndef TILEXR_EP_TEST_RUNTIME_KERNEL_H
+#define TILEXR_EP_TEST_RUNTIME_KERNEL_H
+typedef int rtError_t;
+#define RT_ERROR_NONE 0
 #endif
 ]=])
     list(APPEND TILEXR_EP_TEST_INCLUDE_DIRS "${TILEXR_EP_ACL_STUB_DIR}")
