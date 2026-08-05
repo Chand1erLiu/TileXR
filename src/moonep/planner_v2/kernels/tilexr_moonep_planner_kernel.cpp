@@ -6,7 +6,6 @@
 #include "ep_plan_peer_mailbox.h"
 #undef TILEXR_PLAN_MAILBOX_FN
 #include "planner_common.h"
-#include "runtime/kernel.h"
 #include "tilexr_ep_plan.h"
 #include "tilexr_sync.h"
 
@@ -667,72 +666,4 @@ extern "C" __global__ __aicore__ void tilexr_ep_plan_kernel(GM_ADDR commArgsGM,
         epochState->committedEpoch = epoch;
         RefreshCacheLines(reinterpret_cast<GM_ADDR>(epochState), sizeof(PlanEpochState));
     }
-}
-
-rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR commArgs,
-    GM_ADDR topkExperts, GM_ADDR tokensPerExpert, GM_ADDR globalRankIds, GM_ADDR dst,
-    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteStats, GM_ADDR status,
-    GM_ADDR localWorkspace, GM_ADDR metaWorkspace, int64_t rank, int64_t rankSize,
-    int64_t s, int64_t topK, int64_t expertNum, int64_t prefetchSlots,
-    int64_t rankTokenCapacity, int64_t nvS, int64_t tokenPadding, int64_t tokenRouteLimitPerPair,
-    int32_t cardsPerServer, int32_t cardsPerCabinet, int32_t crossCandidateCount,
-    uint64_t epoch, uint64_t waitIterations, int64_t magic)
-{
-#if defined(TILEXR_PLAN_DIRECT_RT_V2_LAUNCH)
-    struct PlanKernelArgs {
-        GM_ADDR commArgs;
-        GM_ADDR topkExperts;
-        GM_ADDR tokensPerExpert;
-        GM_ADDR globalRankIds;
-        GM_ADDR dst;
-        GM_ADDR cuSeqlens;
-        GM_ADDR expertsToCopy;
-        GM_ADDR remoteStats;
-        GM_ADDR status;
-        GM_ADDR localWorkspace;
-        GM_ADDR metaWorkspace;
-        int64_t rank;
-        int64_t rankSize;
-        int64_t s;
-        int64_t topK;
-        int64_t expertNum;
-        int64_t prefetchSlots;
-        int64_t rankTokenCapacity;
-        int64_t nvS;
-        int64_t tokenPadding;
-        int64_t tokenRouteLimitPerPair;
-        int32_t cardsPerServer;
-        int32_t cardsPerCabinet;
-        int32_t crossCandidateCount;
-        uint64_t epoch;
-        uint64_t waitIterations;
-        int64_t magic;
-    } args {
-        commArgs, topkExperts, tokensPerExpert, globalRankIds, dst, cuSeqlens,
-        expertsToCopy, remoteStats, status, localWorkspace, metaWorkspace, rank,
-        rankSize, s, topK, expertNum, prefetchSlots, rankTokenCapacity, nvS,
-        tokenPadding, tokenRouteLimitPerPair, cardsPerServer, cardsPerCabinet,
-        crossCandidateCount, epoch, waitIterations, magic
-    };
-
-    rtArgsEx_t argsInfo {};
-    argsInfo.args = &args;
-    argsInfo.argsSize = sizeof(args);
-    rtTaskCfgInfo_t cfgInfo {};
-    cfgInfo.schemMode = 1;
-    return rtKernelLaunchWithFlagV2(
-        reinterpret_cast<const void *>(tilexr_ep_plan_kernel), blockDim,
-        &argsInfo, nullptr, static_cast<rtStream_t>(stream), 0, &cfgInfo);
-#else
-    // CANN 9.1 does not register a raw shared-object kernel pointer for a direct
-    // rtKernelLaunchWithFlagV2 call. The compiler-generated launch stub performs
-    // the required device-binary/function registration and uses Runtime V2.
-    tilexr_ep_plan_kernel<<<blockDim, nullptr, stream>>>(commArgs, topkExperts,
-        tokensPerExpert, globalRankIds, dst, cuSeqlens, expertsToCopy, remoteStats,
-        status, localWorkspace, metaWorkspace, rank, rankSize, s, topK, expertNum,
-        prefetchSlots, rankTokenCapacity, nvS, tokenPadding, tokenRouteLimitPerPair,
-        cardsPerServer, cardsPerCabinet, crossCandidateCount, epoch, waitIterations,
-        magic);
-    return RT_ERROR_NONE;
-#endif
 }

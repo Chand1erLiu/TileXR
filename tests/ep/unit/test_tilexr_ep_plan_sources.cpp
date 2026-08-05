@@ -166,6 +166,8 @@ void TestBuildWiring()
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
             "host/tilexr_moonep_planner.cpp");
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
+            "host/planner_kernel_launch.cpp");
+        CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
             "INSTALL_RPATH \"$ORIGIN\"");
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
             "src/include/tilexr_ep_plan.h");
@@ -255,6 +257,17 @@ void TestPlanLaunchAndCommitProtocol()
     CheckContains("src/moonep/planner_v2/host/planner_launch.cpp", launchSource, "TileXRCommNextMagic");
     CheckContains("src/moonep/planner_v2/host/planner_launch.cpp", launchSource, "waitIterations");
 
+    std::string kernelLaunchSource;
+    ReadFile("src/moonep/planner_v2/host/planner_kernel_launch.cpp", &kernelLaunchSource);
+    CheckContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp", kernelLaunchSource,
+        "rtArgsEx_t");
+    CheckContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp", kernelLaunchSource,
+        "rtTaskCfgInfo_t");
+    CheckContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp", kernelLaunchSource,
+        "rtKernelLaunchWithFlagV2");
+    CheckContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp", kernelLaunchSource,
+        "tilexr_ep_plan_kernel<<<blockDim, nullptr, stream>>>");
+
     std::string apiSource;
     ReadFile("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", &apiSource);
     CheckContains("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", apiSource, "LaunchPlanKernel");
@@ -313,13 +326,12 @@ void TestPlanLaunchAndCommitProtocol()
         "RunPlanAlgorithm");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "status[0] == PLAN_OK");
-    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel, "rtArgsEx_t");
-    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
-        "rtTaskCfgInfo_t");
-    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+    CheckNotContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+        "launch_tilexr_ep_plan_kernel");
+    CheckNotContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "rtKernelLaunchWithFlagV2");
-    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
-        "tilexr_ep_plan_kernel<<<blockDim, nullptr, stream>>>");
+    CheckNotContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+        "runtime/kernel.h");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "waitIterations");
 

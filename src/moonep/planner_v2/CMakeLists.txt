@@ -20,6 +20,8 @@ endif()
 
 set(TILEXR_MOONEP_PLANNER_KERNEL_SOURCE
     "${CMAKE_CURRENT_SOURCE_DIR}/kernels/tilexr_moonep_planner_kernel.cpp")
+set(TILEXR_MOONEP_PLANNER_KERNEL_LAUNCH_SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/host/planner_kernel_launch.cpp")
 set(TILEXR_MOONEP_PLANNER_KERNEL_SO
     "${CMAKE_CURRENT_BINARY_DIR}/libtilexr_moonep_planner_kernel.so")
 
@@ -57,6 +59,7 @@ add_custom_command(
         -shared
         ${TILEXR_MOONEP_PLANNER_KERNEL_INCLUDES}
         "${TILEXR_MOONEP_PLANNER_KERNEL_SOURCE}"
+        "${TILEXR_MOONEP_PLANNER_KERNEL_LAUNCH_SOURCE}"
         -L${ASCEND_DRIVER_PATH}/lib64/driver
         -L${ASCEND_HOME_PATH}/${ARCH}-linux/lib64
         -L${ASCEND_HOME_PATH}/${ARCH}-linux/devlib
@@ -70,6 +73,7 @@ add_custom_command(
         -o "${TILEXR_MOONEP_PLANNER_KERNEL_SO}"
     DEPENDS
         "${TILEXR_MOONEP_PLANNER_KERNEL_SOURCE}"
+        "${TILEXR_MOONEP_PLANNER_KERNEL_LAUNCH_SOURCE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/common/ep_plan_algorithm.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/common/ep_plan_algorithm_impl.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/common/ep_plan_types.h"
