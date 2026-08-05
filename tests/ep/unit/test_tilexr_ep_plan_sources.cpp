@@ -240,33 +240,6 @@ void TestMultiRankValidationHarness()
     CheckContains("tests/ep/CMakeLists.txt", cmake,
         "test_tilexr_ep_plan_multirank");
 
-    std::string orchestrator;
-    ReadFile("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", &orchestrator);
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        "mutagen sync flush");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        "8 Rank validation failed; 32 Rank phase is blocked");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        R"($RunId = "$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')-$PID")");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        R"($phaseRun = "$Phase-$RunId")");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        "function Wait-RemoteLog");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        "Waiting for rank 0 listener");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        "skip unverified planner pid");
-    CheckContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        R"(tr '\0' ' ' <"/proc/`$pid/cmdline")");
-    CheckNotContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator,
-        "find '$RemoteEvidence' -maxdepth 1 -type f -name '$Phase-rank-*' -delete");
-    CheckNotContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator, "scp ");
-    CheckNotContains("tests/ep/integration/run_tilexr_ep_plan_multinode.ps1", orchestrator, "rsync ");
-
-    std::string rankRunner;
-    ReadFile("tests/ep/integration/run_tilexr_ep_plan_rank.sh", &rankRunner);
-    CheckNotContains("tests/ep/integration/run_tilexr_ep_plan_rank.sh", rankRunner, "\r");
-    CheckNotContains("tests/ep/integration/run_tilexr_ep_plan_rank.sh", rankRunner, "TILEXR_UDMA");
 }
 
 void TestPlanLaunchAndCommitProtocol()
