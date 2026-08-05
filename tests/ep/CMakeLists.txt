@@ -85,6 +85,7 @@ typedef void *aclrtEvent;
     file(WRITE "${TILEXR_EP_ACL_STUB_DIR}/acl/acl_rt.h" [=[
 #ifndef TILEXR_EP_TEST_ACL_RT_H
 #define TILEXR_EP_TEST_ACL_RT_H
+#include <stddef.h>
 #include "acl_base.h"
 #ifdef __cplusplus
 extern "C" {
@@ -94,8 +95,8 @@ typedef enum aclrtMemcpyKind {
     ACL_MEMCPY_DEVICE_TO_DEVICE = 3
 } aclrtMemcpyKind;
 aclError aclrtStreamWaitEvent(aclrtStream stream, aclrtEvent event);
-aclError aclrtMemcpyAsync(void *dst, unsigned long long destMax, const void *src,
-    unsigned long long count, aclrtMemcpyKind kind, aclrtStream stream);
+aclError aclrtMemcpyAsync(void *dst, size_t destMax, const void *src,
+    size_t count, aclrtMemcpyKind kind, aclrtStream stream);
 #ifdef __cplusplus
 }
 #endif
