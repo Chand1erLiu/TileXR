@@ -17,7 +17,8 @@ using GM_ADDR = uint8_t *;
 
 rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR commArgs,
     GM_ADDR topkExperts, GM_ADDR tokensPerExpert, GM_ADDR globalRankIds, GM_ADDR dst,
-    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteStats, GM_ADDR status,
+    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteExperts, GM_ADDR expertTargets,
+    GM_ADDR remoteStats, GM_ADDR status,
     GM_ADDR localWorkspace, GM_ADDR metaWorkspace, int64_t rank, int64_t rankSize,
     int64_t s, int64_t topK, int64_t expertNum, int64_t prefetchSlots,
     int64_t rankTokenCapacity, int64_t nvS, int64_t tokenPadding, int64_t tokenRouteLimitPerPair,
@@ -194,6 +195,8 @@ bool RunSingleRankParityCase(aclrtStream stream)
     DeviceAllocation deviceDst;
     DeviceAllocation deviceCuSeqlens;
     DeviceAllocation deviceExpertsToCopy;
+    DeviceAllocation deviceRemoteExperts;
+    DeviceAllocation deviceExpertTargets;
     DeviceAllocation deviceRemoteStats;
     DeviceAllocation deviceStatus;
     DeviceAllocation deviceLocalWorkspace;
@@ -207,7 +210,9 @@ bool RunSingleRankParityCase(aclrtStream stream)
     ok = AllocateAndZero(&deviceGlobalRankIds, globalRankIds.size() * sizeof(int32_t), "globalRankIds") && ok;
     ok = AllocateAndZero(&deviceDst, expected.dst.size() * sizeof(int32_t), "dst") && ok;
     ok = AllocateAndZero(&deviceCuSeqlens, expected.cuSeqlens.size() * sizeof(int32_t), "cuSeqlens") && ok;
-    ok = AllocateAndZero(&deviceExpertsToCopy, expected.expertsToCopy.size() * sizeof(int32_t), "expertsToCopy") && ok;
+    ok = AllocateAndZero(&deviceExpertsToCopy, static_cast<size_t>(config.prefetchSlots) * sizeof(int32_t), "expertsToCopy") && ok;
+    ok = AllocateAndZero(&deviceRemoteExperts, expected.expertsToCopy.size() * sizeof(int32_t), "remoteExperts") && ok;
+    ok = AllocateAndZero(&deviceExpertTargets, expected.expertTargets.size() * sizeof(uint64_t), "expertTargets") && ok;
     ok = AllocateAndZero(&deviceRemoteStats, 2 * sizeof(int32_t), "remoteStats") && ok;
     ok = AllocateAndZero(&deviceStatus, TileXREp::Plan::kPlanStatusWords * sizeof(int32_t), "status") && ok;
     ok = AllocateAndZero(&deviceLocalWorkspace, static_cast<size_t>(layout.local.totalBytes), "localWorkspace") && ok;
@@ -239,7 +244,8 @@ bool RunSingleRankParityCase(aclrtStream stream)
 
     const rtError_t launchResult = launch_tilexr_ep_plan_kernel(1, stream, deviceCommArgs.gm(),
         deviceTopk.gm(), deviceTpe.gm(), deviceGlobalRankIds.gm(), deviceDst.gm(),
-        deviceCuSeqlens.gm(), deviceExpertsToCopy.gm(), deviceRemoteStats.gm(),
+        deviceCuSeqlens.gm(), deviceExpertsToCopy.gm(), deviceRemoteExperts.gm(),
+        deviceExpertTargets.gm(), deviceRemoteStats.gm(),
         deviceStatus.gm(), deviceLocalWorkspace.gm(), deviceRegisteredMeta.gm(), rank,
         rankSize, s, topK, expertNum, config.prefetchSlots, config.rankTokenCapacity,
         config.nvS, config.tokenPadding, config.tokenRouteLimitPerPair, config.cardsPerServer,
@@ -261,13 +267,17 @@ bool RunSingleRankParityCase(aclrtStream stream)
 
     std::vector<int32_t> actualDst(expected.dst.size(), -999);
     std::vector<int32_t> actualCuSeqlens(expected.cuSeqlens.size(), -999);
-    std::vector<int32_t> actualExpertsToCopy(expected.expertsToCopy.size(), -999);
+    std::vector<int32_t> actualExpertsToCopy(static_cast<size_t>(config.prefetchSlots), -999);
+    std::vector<int32_t> actualRemoteExperts(expected.expertsToCopy.size(), -999);
+    std::vector<uint64_t> actualExpertTargets(expected.expertTargets.size(), UINT64_MAX);
     std::vector<int32_t> actualRemoteStats(2, -999);
     std::vector<int32_t> actualStatus(TileXREp::Plan::kPlanStatusWords, -999);
 
     ok = CopyDeviceToHost(&actualDst, deviceDst, "dst") && ok;
     ok = CopyDeviceToHost(&actualCuSeqlens, deviceCuSeqlens, "cuSeqlens") && ok;
     ok = CopyDeviceToHost(&actualExpertsToCopy, deviceExpertsToCopy, "expertsToCopy") && ok;
+    ok = CopyDeviceToHost(&actualRemoteExperts, deviceRemoteExperts, "remoteExperts") && ok;
+    ok = CopyDeviceToHost(&actualExpertTargets, deviceExpertTargets, "expertTargets") && ok;
     ok = CopyDeviceToHost(&actualRemoteStats, deviceRemoteStats, "remoteStats") && ok;
     ok = CopyDeviceToHost(&actualStatus, deviceStatus, "status") && ok;
     if (!ok) {
@@ -281,7 +291,11 @@ bool RunSingleRankParityCase(aclrtStream stream)
 
     ok = CompareVector("dst", actualDst, expected.dst) && ok;
     ok = CompareVector("cuSeqlens", actualCuSeqlens, expected.cuSeqlens) && ok;
-    ok = CompareVector("expertsToCopy", actualExpertsToCopy, expected.expertsToCopy) && ok;
+    const std::vector<int32_t> expectedLocalExperts(expected.expertsToCopy.begin(),
+        expected.expertsToCopy.begin() + config.prefetchSlots);
+    ok = CompareVector("expertsToCopy", actualExpertsToCopy, expectedLocalExperts) && ok;
+    ok = CompareVector("remoteExperts", actualRemoteExperts, expected.expertsToCopy) && ok;
+    ok = CompareVector("expertTargets", actualExpertTargets, expected.expertTargets) && ok;
     ok = CompareVector("remoteStats", actualRemoteStats, expectedRemoteStats) && ok;
     ok = CompareVector("status", actualStatus, expectedStatus) && ok;
 

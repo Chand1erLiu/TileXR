@@ -2,9 +2,11 @@
 
 ## Status
 
-Implemented by PR #96. This document records the Planner V2 architecture,
-public contract, synchronization protocol, source ownership, and validation
-boundary represented by that change.
+Implemented by PR #96 and extended by the local Planner V2 delivery change.
+This document records the Planner architecture, metadata and downstream
+contract, synchronization protocol, source ownership, and the hardware
+validation completed for that combined baseline. The detailed field-level
+contract is in `moonep_planner_v2_downstream_contract.md`.
 
 ## Decisions
 
@@ -24,6 +26,12 @@ boundary represented by that change.
    `host/`.
 7. The MoonEP compatibility API remains available and adapts its single
    workspace contract to the explicit Planner V2 workspaces.
+8. Metadata V2 adds destination-oriented `remoteExperts[R,B]` and owner-oriented
+   `expertTargets[E/R,ceil(R/64)]` without changing the legacy optimized Plan
+   descriptor or the MoonEP V1 ABI.
+9. Planner owns placement metadata only. Expert Migration performs weight
+   movement, Dispatch writes the final `tokenRemap`, and Combine consumes that
+   remap; Planner does not implement those downstream data planes.
 
 ## Evidence and Target
 
@@ -33,10 +41,13 @@ boundary represented by that change.
 - Planner build is rejected for non-A5 SoCs.
 - Planner behavior is checked against an independent CPU reference and focused
   Host, layout, algorithm, ABI, source, and multi-rank tests.
-- The standard trusted NPU gate currently runs on 910B3. It validates general
-  TileXR hardware behavior but does not prove the A5-only Planner data path.
-- Cross-node peer-memory behavior remains unvalidated until it runs on the
-  supported multi-node A5/Ascend950 hardware described below.
+- The final local Host/source suite passes 12 of 12 focused Planner/EP tests.
+- The A5/Ascend950 Planner data path has been validated on actual hardware at
+  single-node 2 Rank, single-node 8 Rank, cross-cabinet 4-node 32 Rank, and
+  cross-cabinet 16-node 128 Rank scales.
+- Every validated Rank exited with code zero, emitted `PLAN_VALIDATION_PASS`,
+  agreed on the committed epoch and global digests, and left no Planner process
+  behind after validation.
 
 ## Scope
 
@@ -46,6 +57,11 @@ boundary represented by that change.
   local and metadata workspace sizes.
 - `TileXRMoeEpPlanV2` validates the communicator, buffers, Plan identity,
   workspace capacity, peer windows, and stream before launching asynchronously.
+- `TileXRMoeEpPlanV2WithMetadata` adds an ABI-versioned, counted metadata output
+  descriptor while preserving the legacy optimized entry point.
+- `EncodeMoonEPGlobalTokenId`, `DecodeMoonEPGlobalTokenId`, `DecodeMoonEPDst`,
+  and `BuildMoonEPRouteDescriptor` provide one production implementation of the
+  route encoding contract for Dispatch and Combine consumers.
 - `TileXRMoonEpPlannerGetWorkspaceSizeV2` and `TileXRMoonEpPlannerV2` preserve
   the existing MoonEP-facing compatibility contract.
 
@@ -57,13 +73,16 @@ boundary represented by that change.
 - Enforce prefetch-slot, destination-capacity, and optional per-rank-pair token
   limits.
 - Append remaining local token segments and construct `dst`, `cuSeqlens`,
+  destination-oriented `remoteExperts`, owner-oriented `expertTargets`, legacy
   `expertsToCopy`, `remoteStats`, and status outputs.
 - Preserve the affinity order in metadata for reuse only after an epoch commits
   successfully with the same topology.
 
 ### Cross-Rank Protocol
 
-- Publish one mailbox row per source rank into every target rank's peer window.
+- Publish one mailbox row per source rank into every target rank's owner peer
+  window with MTE3, then consume all source rows from the current rank's local
+  owner `peerMems[rank]` window with MTE2.
 - Exchange the call header, tokens-per-expert row, global rank id, and status.
 - Use three bounded collective phases: data, status, and ready.
 - Reduce rank-local status deterministically before committing the epoch.
@@ -74,13 +93,31 @@ boundary represented by that change.
   `S/K/E`.
 - Carve the optimized local workspace, metadata workspace, generated global
   rank ids, duplicate buffers, and status from one caller-owned workspace.
+- Preserve legacy optimized `expertsToCopy[B]` as the current destination Rank
+  row while copying the MoonEP V1 outward compatibility buffer as `[R,B]`.
 - Copy compatibility outputs asynchronously on the caller's stream.
+
+### Downstream Ownership
+
+- Expert Migration may consume `remoteExperts[dstRank,B]` to build destination
+  copy lists or `expertTargets[localExpert,W]` to discover owner-side targets.
+- Dispatch decodes local `dst[S,K]`, performs the actual token placement, and
+  writes `tokenRemap[NvS]` with encoded global token ids at final receive slots.
+- Combine consumes Dispatch's `tokenRemap`, skips `UINT64_MAX`, decodes the same
+  `R/S/K` tuple, and routes expert output back to the originating token route.
+- Planner does not claim that metadata publication moved expert weights or token
+  payloads. The native Dispatch, Combine, and weight-transfer implementations
+  remain outside this component.
 
 ## Non-Goals
 
 - Running Planner V2 on 910B or other non-A5 products.
 - Using HCCL for Planner metadata or barriers.
 - Registering Planner metadata with UDMA or adding a UDMA fallback.
+- Using `creditmem`, producing `zeroFillRanges`, or registering `peerMems[]` as
+  UDMA transfer targets.
+- Producing `tokenRemap`, executing real expert-weight copies, or implementing
+  Dispatch/Combine token data movement inside Planner.
 - Resetting shared peer flag memory between calls.
 - Increasing the active communicator ABI beyond
   `TileXR::TILEXR_MAX_RANK_SIZE`.
@@ -123,6 +160,7 @@ K      experts selected per token
 R      ranks in the Planner communicator
 E      global experts; E must be divisible by R
 B      prefetch slots per rank
+W      expert-target bitmap words; W = ceil(R / 64)
 Cap    token capacity per rank; required to equal S * K
 NvS    encoded destination stride; NvS >= Cap
 ```
@@ -135,15 +173,28 @@ tokensPerExpert   int32 [E]
 globalRankIds     int32 [R]
 ```
 
-Primary outputs are caller-owned device buffers:
+The legacy optimized Plan descriptor uses caller-owned device buffers:
 
 ```text
 dst               int32 [S, K]
 cuSeqlens         int32 [E + B]
-expertsToCopy     int32 [R, B]
+expertsToCopy     int32 [B]      current destination Rank row
 remoteStats       int32 [2]
 status            int32 [8]
 ```
+
+Metadata V2 adds counted caller-owned outputs without changing that descriptor:
+
+```text
+remoteExperts     int32  [R, B]  destination-oriented expert ids
+expertTargets     uint64 [E/R,W] owner-oriented destination bitmap
+```
+
+Every metadata count is an element count, not a byte count. Metadata V2 does
+not contain `tokenRemap`; Dispatch owns and fills that mapping after actual
+receive-slot placement. The MoonEP V1 compatibility layer continues to copy a
+complete `[R,B]` remote-expert matrix into its historical outward
+`expertsToCopy` buffer.
 
 The Plan descriptor also carries duplicate-group buffers used by the public
 and compatibility ABI. All Plan pointers must be non-null and int32-aligned.
@@ -236,9 +287,11 @@ row:
 ```
 
 The Host validates that all `peerMems[0..R)` entries are non-null and that one
-publication row fits the supported IPC data window. The kernel first writes the
-local row, performs cache maintenance, and copies it to every other target with
-512-byte MTE2/MTE3 transfers.
+publication row fits the supported IPC data window. A source rank first writes
+its row under `peerMems[sourceRank]`, loads through MTE2 into a UB relay, and
+uses MTE3 to push the row into the same `sourceRank` slot under every target
+owner window. A destination consumes all rows only from its local owner
+`peerMems[rank]` mapping.
 
 No Planner path reads `udmaInfoPtr`, `udmaRegistryPtr`, or a registered remote
 memory handle.
@@ -258,9 +311,11 @@ the phase, rank count, and a 512-byte stride. A static assertion keeps the
 maximum slot range below `IPC_DATA_OFFSET`.
 
 Each call obtains a fresh magic through `TileXRCommNextMagic`. The published
-64-bit value combines magic and phase. Publication uses scalar-to-MTE3 ordering;
-polling uses MTE2-to-scalar ordering and explicit cache maintenance. Every wait
-is bounded by `waitIterations`.
+64-bit value combines magic and phase. For each source slot, MTE3 writes the
+flag directly to every target owner's `peerMems[targetRank]`; each rank polls
+all source slots through MTE2 only from `peerMems[rank]`. Explicit event
+ordering and cache maintenance surround both directions. Every wait is bounded
+by `waitIterations`.
 
 On timeout, status word 0 is `1000 + timedOutPeer`. Remaining status words may
 contain the phase, peer, observed value, and address evidence needed for device
@@ -295,8 +350,8 @@ kernel through address/function macros. Its deterministic stages are:
 4. Move remaining feasible segments across server groups using the configured
    candidate count.
 5. Append tokens that remain on their home ranks.
-6. Build remote expert sets, cumulative sequence lengths, and encoded
-   destinations.
+6. Build destination-oriented remote expert sets, owner-oriented expert target
+   bitmaps, cumulative sequence lengths, and encoded destinations.
 7. Fill status and statistics, including partial-plan reasons where constraints
    prevent a complete move set.
 
@@ -367,35 +422,68 @@ use the same dimensions, configuration, epoch, call order, and stream ordering.
 
 ### Source and Host
 
-- Public ABI compilation and compatibility wrapper tests.
-- Checked workspace layout, alignment, and overflow tests.
-- Host validation with missing pointers, invalid Plan identity, insufficient
-  workspaces, missing peer windows, and invalid runtime metadata.
-- Shared algorithm tests and independent CPU-reference comparisons.
-- Source guards for build ownership, no UDMA calls, Runtime V2 launch placement,
-  barrier ordering, epoch commit, and status reduction.
-- Multi-rank harness source checks for 2, 8, and 32 ranks.
+The final local validation command set is:
 
-### A5 Single Node
+```text
+cmake --build work/tests-ep -j 8
+ctest --test-dir work/tests-ep --output-on-failure
+git diff --check
+```
 
-- Configure and build with CANN 9.1 for Ascend910A5/Ascend950.
-- Verify kernel and Host launch translation units link into the generated
-  kernel library.
-- Run 1/2/8-rank balanced, biased, duplicate, partial, repeated-epoch, and
-  timeout cases against the CPU reference.
-- Repeat calls with new magic values and verify affinity-cache reuse only after
-  successful commit.
+It builds successfully and passes all 12 focused Planner/EP tests. Coverage
+includes public ABI compilation, workspace layout and overflow, Host argument
+validation, independent CPU-reference comparison, downstream route helpers,
+metadata counts and compatibility semantics, no-UDMA/no-zero-fill source
+guards, barrier ownership, epoch commit, and the 2/8/32/128 Rank harness.
 
-### A5 Cross Node
+The installed production library exports:
 
-- Use at least two supported nodes and one TileXR communicator.
-- Verify every remote `peerMems` entry and mailbox row before full planning.
-- Compare all primary outputs and status against the CPU reference.
-- Exercise call-header mismatch, skipped peer, and bounded timeout.
-- Confirm there are no UDMA registrations or transfers in the Planner path.
+```text
+TileXRMoeEpPlanV2
+TileXRMoeEpPlanV2GetWorkspaceSize
+TileXRMoeEpPlanV2WithMetadata
+EncodeMoonEPGlobalTokenId
+DecodeMoonEPGlobalTokenId
+DecodeMoonEPDst
+BuildMoonEPRouteDescriptor
+```
 
-Cross-node Planner behavior remains unvalidated until this matrix completes on
-actual supported hardware.
+### A5/Ascend950 Hardware Matrix
+
+Validation used the current installed Planner, kernel, and `tile-comm` artifacts
+from `/home/l00929943/TileXR-planner-v2-pr96-20260805`. Each Rank compared
+legacy and metadata outputs with the CPU oracle and participated in epoch and
+digest agreement.
+
+| Scale | Placement | Result | Evidence phase |
+| --- | --- | --- | --- |
+| 2 Rank | one node, devices 0-1 | 2/2 pass | `2rank-singlehost-20260805-194320-1621428` |
+| 8 Rank | one node, devices 0-7 | 8/8 pass | `8rank-singlehost-20260805-194514-1747897` |
+| 32 Rank | four nodes across two cabinets | 32/32 pass | `32rank-crosscabinet-20260805-195207-48360` |
+| 128 Rank | sixteen nodes across two cabinets | 128/128 pass | `128rank-crosscabinet-20260805-201251-53128` |
+
+The 128-Rank run covered all eight requested nodes in cabinet C02-A07 and all
+eight requested nodes in cabinet C02-A04. All 128 exit files contained zero,
+all logs contained `PLAN_VALIDATION_PASS`, Rank 0 emitted `ALL_RANKS_PASS`, and
+the requested and committed epochs matched. Post-run inspection found no
+residual validation Planner process on any node.
+
+### Synchronization and Evidence Boundary
+
+Local-to-remote source synchronization used 16 Mutagen sessions only. The 29
+executable-delivery files used by hardware validation (that set excludes this
+canonical design document) had the same combined SHA-256 manifest on the local
+workspace, Mutagen alpha mirror, and every remote node:
+
+```text
+723dadee76c15e23692c4d1a681d9c444c49bbfdee26f590ca777a45032685b4
+```
+
+Hardware logs are retained under
+`/home/l00929943/tilexr-plan-evidence-c02-20260805`. The hardware claim covers
+the Planner metadata and planning path exercised by that harness; it does not
+claim that downstream Dispatch, Combine, or expert-weight movement kernels have
+been implemented or validated.
 
 ## Acceptance Criteria
 
@@ -412,4 +500,8 @@ actual supported hardware.
    explicitly rather than hanging or falling back.
 7. Build/install preserves C++14 Host compatibility, A5-only kernel targeting,
    `$ORIGIN` runtime lookup, and no active dependency on `reference/`.
-8. Validation claims remain scoped to the Host and hardware actually exercised.
+8. Metadata V2 exposes complete destination and owner views without changing
+   legacy ABI semantics; route helpers define the shared Dispatch/Combine
+   encoding contract while leaving `tokenRemap` Dispatch-owned.
+9. The validated 2/8/32/128 Rank matrix passes on actual supported hardware and
+   validation claims remain scoped to the Planner path actually exercised.

@@ -466,6 +466,8 @@ TileXRMoonEPPlanStatus BuildLayouts(PlannerState *state,
     state->output.expertsToCopy.assign(
         static_cast<size_t>(static_cast<int64_t>(state->rankSize) * state->prefetchSlots), -1);
     state->output.remoteStats.assign(static_cast<size_t>(state->rankSize * 2), 0);
+    const int32_t targetWords = (state->rankSize + 63) / 64;
+    state->output.expertTargets.assign(static_cast<size_t>(state->rankSize * state->expertsPerRank * targetWords), 0);
     expertPhysicalBase->assign(static_cast<size_t>(state->rankSize * state->expertNum), 0);
 
     std::vector<std::vector<int32_t> > remoteExperts(static_cast<size_t>(state->rankSize));
@@ -493,6 +495,9 @@ TileXRMoonEPPlanStatus BuildLayouts(PlannerState *state,
             state->output.expertsToCopy[static_cast<size_t>(dst * state->prefetchSlots + slot)] = remote[slot];
             const int32_t home = HomeRank(remote[slot], state->expertsPerRank);
             ++state->output.remoteStats[static_cast<size_t>(home * 2 + 1)];
+            const int32_t localExpert = remote[slot] - home * state->expertsPerRank;
+            state->output.expertTargets[static_cast<size_t>((home * state->expertsPerRank + localExpert) * targetWords + dst / 64)] |=
+                1ULL << (dst % 64);
         }
     }
 
@@ -864,6 +869,11 @@ bool CheckReferencePlanInvariants(const ReferenceInput &input,
         static_cast<size_t>(static_cast<int64_t>(rankSize) * input.config.prefetchSlots)) {
         return SetError(error, "expertsToCopy shape mismatch");
     }
+    const int32_t targetWords = (rankSize + 63) / 64;
+    if (output.expertTargets.size() !=
+        static_cast<size_t>(static_cast<int64_t>(expertNum) * targetWords)) {
+        return SetError(error, "expertTargets shape mismatch");
+    }
     if (output.statusByRank.size() !=
         static_cast<size_t>(static_cast<int64_t>(rankSize) * kPlanStatusWords)) {
         return SetError(error, "statusByRank shape mismatch");
@@ -914,6 +924,8 @@ bool CheckReferencePlanInvariants(const ReferenceInput &input,
 
     std::vector<std::vector<int32_t> > expectedRemoteExperts(static_cast<size_t>(rankSize));
     std::vector<int32_t> expectedRemoteStats(static_cast<size_t>(rankSize * 2), 0);
+    std::vector<uint64_t> expectedExpertTargets(
+        static_cast<size_t>(static_cast<int64_t>(expertNum) * targetWords), 0);
     const int32_t expertsPerRank = expertNum / rankSize;
     for (int32_t rank = 0; rank < rankSize; ++rank) {
         std::vector<int32_t> &remote = expectedRemoteExperts[static_cast<size_t>(rank)];
@@ -930,7 +942,10 @@ bool CheckReferencePlanInvariants(const ReferenceInput &input,
         });
         expectedRemoteStats[static_cast<size_t>(rank * 2)] = static_cast<int32_t>(remote.size());
         for (size_t slot = 0; slot < remote.size(); ++slot) {
-            ++expectedRemoteStats[static_cast<size_t>(HomeRank(remote[slot], expertsPerRank) * 2 + 1)];
+            const int32_t expert = remote[slot];
+            ++expectedRemoteStats[static_cast<size_t>(HomeRank(expert, expertsPerRank) * 2 + 1)];
+            expectedExpertTargets[static_cast<size_t>(
+                static_cast<int64_t>(expert) * targetWords + rank / 64)] |= 1ULL << (rank % 64);
         }
         if (output.finalStatus == PLAN_OK) {
             for (int64_t slot = 0; slot < input.config.prefetchSlots; ++slot) {
@@ -945,6 +960,9 @@ bool CheckReferencePlanInvariants(const ReferenceInput &input,
     }
     if (output.finalStatus == PLAN_OK && output.remoteStats != expectedRemoteStats) {
         return SetError(error, "remoteStats mismatch");
+    }
+    if (output.finalStatus == PLAN_OK && output.expertTargets != expectedExpertTargets) {
+        return SetError(error, "expertTargets content mismatch");
     }
 
     const size_t rankExpertCount = static_cast<size_t>(rankSize * expertNum);

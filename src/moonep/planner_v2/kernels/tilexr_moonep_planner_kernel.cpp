@@ -539,7 +539,8 @@ __aicore__ inline void WriteBarrierDebugStatus(__gm__ int32_t *status, int32_t v
 
 extern "C" __global__ __aicore__ void tilexr_ep_plan_kernel(GM_ADDR commArgsGM,
     GM_ADDR topkExpertsGM, GM_ADDR tokensPerExpertGM, GM_ADDR globalRankIdsGM, GM_ADDR dstGM,
-    GM_ADDR cuSeqlensGM, GM_ADDR expertsToCopyGM, GM_ADDR remoteStatsGM, GM_ADDR statusGM,
+    GM_ADDR cuSeqlensGM, GM_ADDR expertsToCopyGM, GM_ADDR remoteExpertsGM,
+    GM_ADDR expertTargetsGM, GM_ADDR remoteStatsGM, GM_ADDR statusGM,
     GM_ADDR localWorkspaceGM, GM_ADDR metaWorkspaceGM, int64_t rank, int64_t rankSize,
     int64_t s, int64_t topK, int64_t expertNum, int64_t prefetchSlots,
     int64_t rankTokenCapacity, int64_t nvS, int64_t tokenPadding, int64_t tokenRouteLimitPerPair,
@@ -619,7 +620,12 @@ extern "C" __global__ __aicore__ void tilexr_ep_plan_kernel(GM_ADDR commArgsGM,
         PlanAlgorithmOutput output {};
         output.dst = reinterpret_cast<__gm__ int32_t *>(dstGM);
         output.cuSeqlens = reinterpret_cast<__gm__ int32_t *>(cuSeqlensGM);
-        output.expertsToCopy = reinterpret_cast<__gm__ int32_t *>(expertsToCopyGM);
+        auto remoteExperts = reinterpret_cast<__gm__ int32_t *>(remoteExpertsGM);
+        output.expertsToCopy = remoteExperts != nullptr
+            ? remoteExperts + static_cast<int64_t>(rank) * prefetchSlots
+            : reinterpret_cast<__gm__ int32_t *>(expertsToCopyGM);
+        output.remoteExperts = remoteExperts;
+        output.expertTargets = reinterpret_cast<__gm__ uint64_t *>(expertTargetsGM);
         output.remoteStats = reinterpret_cast<__gm__ int32_t *>(remoteStatsGM);
         output.status = status;
         PlanAlgorithmWorkspace workspace = BindAlgorithmWorkspace(localWorkspaceGM, metaWorkspaceGM,

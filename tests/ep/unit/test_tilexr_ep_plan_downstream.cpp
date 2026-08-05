@@ -99,6 +99,49 @@ void TestReferencePlanFeedsDuplicateMetadata()
     TileXREp::Plan::ReferenceOutput output;
     Check(TileXREp::Plan::BuildReferencePlan(input, &output) == PLAN_OK,
         "reference dedup plan must succeed");
+    std::vector<std::vector<uint64_t> > tokenRemap(static_cast<size_t>(input.rankSize),
+        std::vector<uint64_t>(static_cast<size_t>(input.config.nvS),
+            TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID));
+    for (int32_t srcRank = 0; srcRank < input.rankSize; ++srcRank) {
+        for (int32_t token = 0; token < input.s; ++token) {
+            for (int32_t topKId = 0; topKId < input.topK; ++topKId) {
+                const size_t routeIndex = static_cast<size_t>(
+                    (srcRank * input.s + token) * input.topK + topKId);
+                TileXREp::Plan::MoonEPRouteDescriptor route {};
+                Check(TileXREp::Plan::BuildMoonEPRouteDescriptor(srcRank, token, topKId,
+                    output.dst[routeIndex], input.rankSize, input.s, input.topK,
+                    input.config.nvS, &route) == PLAN_OK,
+                    "all-rank Planner route must build a Dispatch descriptor");
+                uint64_t &slot = tokenRemap[static_cast<size_t>(route.dstRank)]
+                    [static_cast<size_t>(route.recvSlot)];
+                Check(slot == TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID,
+                    "Planner dst must not collide while Dispatch reconstructs tokenRemap");
+                slot = route.globalTokenId;
+            }
+        }
+    }
+    for (int32_t dstRank = 0; dstRank < input.rankSize; ++dstRank) {
+        for (uint64_t globalTokenId : tokenRemap[static_cast<size_t>(dstRank)]) {
+            Check(globalTokenId != TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID,
+                "balanced reference plan must populate every target slot");
+            int32_t srcRank = -1, token = -1, topKId = -1;
+            Check(TileXREp::Plan::DecodeMoonEPGlobalTokenId(globalTokenId,
+                input.rankSize, input.s, input.topK, &srcRank, &token, &topKId) == PLAN_OK,
+                "Combine must decode every reconstructed tokenRemap entry");
+        }
+    }
+    const int32_t expertsPerRank = static_cast<int32_t>(input.expertNum / input.rankSize);
+    const int32_t targetWords = (input.rankSize + 63) / 64;
+    for (int32_t ownerRank = 0; ownerRank < input.rankSize; ++ownerRank) {
+        std::vector<uint64_t> rebuilt(static_cast<size_t>(expertsPerRank * targetWords), 0);
+        Check(TileXREp::Plan::BuildMoonEPExpertTargets(output.expertsToCopy.data(), input.rankSize,
+            input.expertNum, input.config.prefetchSlots, ownerRank, rebuilt.data(), rebuilt.size()) == PLAN_OK,
+            "expertTargets must be derivable from destination-oriented remoteExperts");
+        const auto expectedBegin = output.expertTargets.begin() +
+            ownerRank * expertsPerRank * targetWords;
+        Check(std::equal(rebuilt.begin(), rebuilt.end(), expectedBegin),
+            "remoteExperts and expertTargets must be bidirectionally consistent");
+    }
     for (int32_t dstRank = 0; dstRank < input.rankSize; ++dstRank) {
         std::vector<TileXREp::Plan::MoonEPReceivedRoute> records;
         for (int32_t srcRank = 0; srcRank < input.rankSize; ++srcRank) {
@@ -171,10 +214,56 @@ void TestDuplicateMetadataRejectsInvalidGroups()
         "recvSlot outside NvS must fail");
 }
 
+
+void TestGlobalTokenAndRouteDescriptor()
+{
+    uint64_t id = 0;
+    Check(TileXREp::Plan::EncodeMoonEPGlobalTokenId(3, 7, 2, 8, 16, 4, &id) == PLAN_OK,
+        "global token encode must succeed");
+    Check(id == static_cast<uint64_t>((3 * 16 + 7) * 4 + 2), "global token encoding mismatch");
+    int32_t rank = -1, token = -1, topk = -1;
+    Check(TileXREp::Plan::DecodeMoonEPGlobalTokenId(id, 8, 16, 4, &rank, &token, &topk) == PLAN_OK,
+        "global token decode must succeed");
+    Check(rank == 3 && token == 7 && topk == 2, "global token round trip mismatch");
+    Check(TileXREp::Plan::DecodeMoonEPGlobalTokenId(TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID,
+        8, 16, 4, &rank, &token, &topk) == PLAN_ERROR_CONFIG_MISMATCH,
+        "invalid remap sentinel must be rejected");
+    Check(TileXREp::Plan::DecodeMoonEPGlobalTokenId(
+        static_cast<uint64_t>(INT32_MAX) + 1, static_cast<int64_t>(INT32_MAX) + 2,
+        1, 1, &rank, &token, &topk) == PLAN_ERROR_CONFIG_MISMATCH,
+        "decoded source rank outside int32 must be rejected");
+    Check(TileXREp::Plan::DecodeMoonEPGlobalTokenId(
+        static_cast<uint64_t>(INT32_MAX) + 1, 1,
+        static_cast<int64_t>(INT32_MAX) + 2, 1, &rank, &token, &topk) == PLAN_ERROR_CONFIG_MISMATCH,
+        "decoded token id outside int32 must be rejected");
+    Check(TileXREp::Plan::DecodeMoonEPGlobalTokenId(
+        static_cast<uint64_t>(INT32_MAX) + 1, 1, 1,
+        static_cast<int64_t>(INT32_MAX) + 2, &rank, &token, &topk) == PLAN_ERROR_CONFIG_MISMATCH,
+        "decoded top-k id outside int32 must be rejected");
+    TileXREp::Plan::MoonEPRouteDescriptor route {};
+    const int32_t raw = 5 * 100 + 99;
+    Check(TileXREp::Plan::BuildMoonEPRouteDescriptor(3, 7, 2, ~raw, 8, 16, 4, 100,
+        &route) == PLAN_OK, "duplicate route descriptor must build");
+    Check(route.globalTokenId == id && route.dstRank == 5 && route.recvSlot == 99 &&
+        route.sendHidden == 0 && route.writeRouteWeight == 1, "route descriptor mismatch");
+}
+
+void TestExpertTargetsContract()
+{
+    const int32_t remoteExperts[8] = {2, -1, 0, -1, 3, -1, 1, -1};
+    uint64_t targets[2] = {};
+    Check(TileXREp::Plan::BuildMoonEPExpertTargets(remoteExperts, 4, 8, 2, 0,
+        targets, 2) == PLAN_OK, "expert targets must build");
+    Check(targets[0] == (1ULL << 1) && targets[1] == (1ULL << 3),
+        "owner-oriented expert bitmap mismatch");
+}
+
 } // namespace
 
 int main()
 {
+    TestGlobalTokenAndRouteDescriptor();
+    TestExpertTargetsContract();
     TestDstDecode();
     TestDuplicateMetadata();
     TestDuplicateMetadataAllowsEmptyRank();

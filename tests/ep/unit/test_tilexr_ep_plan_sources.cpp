@@ -56,6 +56,12 @@ void TestPublicPlanApi()
     CheckContains("src/include/tilexr_ep_plan.h", header, "struct TileXRMoonEPPlanDesc");
     CheckContains("src/include/tilexr_ep_plan.h", header, "int TileXRMoeEpPlanV2GetWorkspaceSize(");
     CheckContains("src/include/tilexr_ep_plan.h", header, "int TileXRMoeEpPlanV2(");
+    CheckContains("src/include/tilexr_ep_plan.h", header, "struct MoonEPRouteTarget");
+    CheckContains("src/include/tilexr_ep_plan.h", header, "struct MoonEPRouteDescriptor");
+    CheckContains("src/include/tilexr_ep_plan.h", header, "EncodeMoonEPGlobalTokenId(");
+    CheckContains("src/include/tilexr_ep_plan.h", header, "DecodeMoonEPGlobalTokenId(");
+    CheckContains("src/include/tilexr_ep_plan.h", header, "DecodeMoonEPDst(");
+    CheckContains("src/include/tilexr_ep_plan.h", header, "BuildMoonEPRouteDescriptor(");
 
     std::string compatibilityHeader;
     if (ReadFile("src/include/tilexr_moonep_planner.h", &compatibilityHeader)) {
@@ -159,12 +165,52 @@ void TestBuildWiring()
             "add_subdirectory(planner_v2)");
     }
 
+    std::string helperConsumer;
+    if (ReadFile("tests/ep/integration/test_tilexr_ep_plan_public_helper_consumer.cpp",
+            &helperConsumer)) {
+        CheckContains("tests/ep/integration/test_tilexr_ep_plan_public_helper_consumer.cpp",
+            helperConsumer, "#include \"tilexr_ep_plan.h\"");
+        CheckContains("tests/ep/integration/test_tilexr_ep_plan_public_helper_consumer.cpp",
+            helperConsumer, "EncodeMoonEPGlobalTokenId(");
+        CheckContains("tests/ep/integration/test_tilexr_ep_plan_public_helper_consumer.cpp",
+            helperConsumer, "DecodeMoonEPGlobalTokenId(");
+        CheckContains("tests/ep/integration/test_tilexr_ep_plan_public_helper_consumer.cpp",
+            helperConsumer, "DecodeMoonEPDst(");
+        CheckContains("tests/ep/integration/test_tilexr_ep_plan_public_helper_consumer.cpp",
+            helperConsumer, "BuildMoonEPRouteDescriptor(");
+    }
+
+    std::string epTestsManifest;
+    if (ReadFile("tests/ep/CMakeLists.txt", &epTestsManifest)) {
+        const std::string consumerTarget =
+            "add_executable(test_tilexr_ep_plan_public_helper_consumer";
+        const std::string multirankTarget =
+            "add_executable(test_tilexr_ep_plan_multirank";
+        const std::string::size_type begin = epTestsManifest.find(consumerTarget);
+        const std::string::size_type end = epTestsManifest.find(multirankTarget, begin);
+        if (begin == std::string::npos || end == std::string::npos) {
+            std::cerr << "tests/ep/CMakeLists.txt missing installed helper consumer target"
+                      << std::endl;
+            ++g_failures;
+        } else {
+            const std::string consumerBuild = epTestsManifest.substr(begin, end - begin);
+            CheckContains("tests/ep/CMakeLists.txt helper consumer block", consumerBuild,
+                "integration/test_tilexr_ep_plan_public_helper_consumer.cpp");
+            CheckContains("tests/ep/CMakeLists.txt helper consumer block", consumerBuild,
+                "${TILEXR_PLAN_MULTIRANK_PLANNER_LIB}");
+            CheckNotContains("tests/ep/CMakeLists.txt helper consumer block", consumerBuild,
+                "ep_plan_downstream.cpp");
+        }
+    }
+
     std::string plannerManifest;
     if (ReadFile("src/moonep/planner_v2/CMakeLists.txt", &plannerManifest)) {
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
             "kernels/tilexr_moonep_planner_kernel.cpp");
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
             "host/tilexr_moonep_planner.cpp");
+        CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
+            "common/ep_plan_downstream.cpp");
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
             "host/planner_kernel_launch.cpp");
         CheckContains("src/moonep/planner_v2/CMakeLists.txt", plannerManifest,
@@ -211,6 +257,16 @@ void TestMultiRankValidationHarness()
     CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
         "TileXRMoeEpPlanV2(");
     CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
+        "TileXRMoeEpPlanV2WithMetadata(");
+    CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
+        "ValidateGlobalTokenRemap");
+    CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
+        "actualRemoteExperts");
+    CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
+        "actualExpertTargets");
+    CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
+        "metadataLegacySlice");
+    CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
         "BuildReferencePlan");
     CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
         "requestedEpoch");
@@ -229,10 +285,12 @@ void TestMultiRankValidationHarness()
     CheckNotContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
         "zeroFillRanges");
     CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
-        "rankSize != 2 && rankSize != 8 && rankSize != 32");
+        "rankSize != 2 && rankSize != 8 && rankSize != 32 && rankSize != 128");
     CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
         "input.globalRankIds = {0, 8};");
     CheckContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
+        "<2|8|32|128> <rank> <device 0..7>");
+    CheckNotContains("tests/ep/integration/test_tilexr_ep_plan_multirank.cpp", testSource,
         "<2|8|32> <rank> <device 0..7>");
 
     std::string cmake;
@@ -267,6 +325,17 @@ void TestPlanLaunchAndCommitProtocol()
         "rtKernelLaunchWithFlagV2");
     CheckContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp", kernelLaunchSource,
         "tilexr_ep_plan_kernel<<<blockDim, nullptr, stream>>>");
+    std::string normalizedKernelLaunchSource = kernelLaunchSource;
+    for (std::string::size_type pos = normalizedKernelLaunchSource.find('\r');
+         pos != std::string::npos; pos = normalizedKernelLaunchSource.find('\r', pos)) {
+        normalizedKernelLaunchSource.erase(pos, 1);
+    }
+    CheckContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp",
+        normalizedKernelLaunchSource,
+        "#define TILING_KEY_VAR 0ULL\n#include \"kernel_operator.h\"");
+    CheckNotContains("src/moonep/planner_v2/host/planner_kernel_launch.cpp",
+        normalizedKernelLaunchSource,
+        "#define TILING_KEY_VAR 0ULL#include");
 
     std::string apiSource;
     ReadFile("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", &apiSource);
@@ -324,6 +393,10 @@ void TestPlanLaunchAndCommitProtocol()
         "BuildTopologyHash");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "RunPlanAlgorithm");
+    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+        "auto remoteExperts = reinterpret_cast<__gm__ int32_t *>(remoteExpertsGM);");
+    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+        "remoteExperts + static_cast<int64_t>(rank) * prefetchSlots");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "status[0] == PLAN_OK");
     CheckNotContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,

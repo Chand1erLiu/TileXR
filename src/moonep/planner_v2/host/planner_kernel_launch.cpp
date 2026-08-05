@@ -1,3 +1,8 @@
+// This host-only launch translation unit must not emit Ascend C's per-kernel
+// tiling-key storage. The device-kernel translation unit owns that symbol.
+// Defining the customization hook before kernel_operator.h prevents a second
+// g_tilingKey definition when Bisheng links both translation units.
+#define TILING_KEY_VAR 0ULL
 #include "kernel_operator.h"
 
 #include "comm_args.h"
@@ -5,7 +10,8 @@
 
 extern "C" __global__ __aicore__ void tilexr_ep_plan_kernel(GM_ADDR commArgsGM,
     GM_ADDR topkExpertsGM, GM_ADDR tokensPerExpertGM, GM_ADDR globalRankIdsGM, GM_ADDR dstGM,
-    GM_ADDR cuSeqlensGM, GM_ADDR expertsToCopyGM, GM_ADDR remoteStatsGM, GM_ADDR statusGM,
+    GM_ADDR cuSeqlensGM, GM_ADDR expertsToCopyGM, GM_ADDR remoteExpertsGM,
+    GM_ADDR expertTargetsGM, GM_ADDR remoteStatsGM, GM_ADDR statusGM,
     GM_ADDR localWorkspaceGM, GM_ADDR metaWorkspaceGM, int64_t rank, int64_t rankSize,
     int64_t s, int64_t topK, int64_t expertNum, int64_t prefetchSlots,
     int64_t rankTokenCapacity, int64_t nvS, int64_t tokenPadding, int64_t tokenRouteLimitPerPair,
@@ -14,7 +20,8 @@ extern "C" __global__ __aicore__ void tilexr_ep_plan_kernel(GM_ADDR commArgsGM,
 
 rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR commArgs,
     GM_ADDR topkExperts, GM_ADDR tokensPerExpert, GM_ADDR globalRankIds, GM_ADDR dst,
-    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteStats, GM_ADDR status,
+    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteExperts, GM_ADDR expertTargets,
+    GM_ADDR remoteStats, GM_ADDR status,
     GM_ADDR localWorkspace, GM_ADDR metaWorkspace, int64_t rank, int64_t rankSize,
     int64_t s, int64_t topK, int64_t expertNum, int64_t prefetchSlots,
     int64_t rankTokenCapacity, int64_t nvS, int64_t tokenPadding, int64_t tokenRouteLimitPerPair,
@@ -30,6 +37,8 @@ rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR 
         GM_ADDR dst;
         GM_ADDR cuSeqlens;
         GM_ADDR expertsToCopy;
+        GM_ADDR remoteExperts;
+        GM_ADDR expertTargets;
         GM_ADDR remoteStats;
         GM_ADDR status;
         GM_ADDR localWorkspace;
@@ -52,7 +61,7 @@ rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR 
         int64_t magic;
     } args {
         commArgs, topkExperts, tokensPerExpert, globalRankIds, dst, cuSeqlens,
-        expertsToCopy, remoteStats, status, localWorkspace, metaWorkspace, rank,
+        expertsToCopy, remoteExperts, expertTargets, remoteStats, status, localWorkspace, metaWorkspace, rank,
         rankSize, s, topK, expertNum, prefetchSlots, rankTokenCapacity, nvS,
         tokenPadding, tokenRouteLimitPerPair, cardsPerServer, cardsPerCabinet,
         crossCandidateCount, epoch, waitIterations, magic
@@ -70,8 +79,8 @@ rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR 
     // Keep the compiler-generated registration path used by CANN 9.1 while
     // owning all Host launch code outside the device-kernel translation unit.
     tilexr_ep_plan_kernel<<<blockDim, nullptr, stream>>>(commArgs, topkExperts,
-        tokensPerExpert, globalRankIds, dst, cuSeqlens, expertsToCopy, remoteStats,
-        status, localWorkspace, metaWorkspace, rank, rankSize, s, topK, expertNum,
+        tokensPerExpert, globalRankIds, dst, cuSeqlens, expertsToCopy, remoteExperts,
+        expertTargets, remoteStats, status, localWorkspace, metaWorkspace, rank, rankSize, s, topK, expertNum,
         prefetchSlots, rankTokenCapacity, nvS, tokenPadding, tokenRouteLimitPerPair,
         cardsPerServer, cardsPerCabinet, crossCandidateCount, epoch, waitIterations,
         magic);

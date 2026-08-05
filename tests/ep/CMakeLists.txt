@@ -328,6 +328,33 @@ if(BUILD_TILEXR_EP_PLAN_MULTIRANK_TEST)
     find_library(TILEXR_PLAN_MULTIRANK_COMM_LIB tile-comm
         HINTS "${TILEXR_PLAN_MULTIRANK_LIB_SEARCH_DIR}" REQUIRED)
 
+    # This consumer intentionally compiles no Planner implementation source. It verifies
+    # that the installed public header and production shared library export the four
+    # downstream route helpers required by Dispatch and Combine.
+    add_executable(test_tilexr_ep_plan_public_helper_consumer
+        integration/test_tilexr_ep_plan_public_helper_consumer.cpp
+    )
+    target_include_directories(test_tilexr_ep_plan_public_helper_consumer PRIVATE
+        "${TILEXR_PLAN_MULTIRANK_INCLUDE_SEARCH_DIR}"
+        "${ASCEND_HOME_PATH}/${ARCH}-linux/include"
+        "${ASCEND_HOME_PATH}/${ARCH}-linux/pkg_inc"
+        "${ASCEND_HOME_PATH}/${ARCH}-linux/pkg_inc/runtime"
+    )
+    target_link_directories(test_tilexr_ep_plan_public_helper_consumer PRIVATE
+        "${TILEXR_PLAN_MULTIRANK_LIB_SEARCH_DIR}"
+        "${ASCEND_HOME_PATH}/${ARCH}-linux/lib64"
+        "${ASCEND_DRIVER_PATH}/lib64/driver"
+    )
+    target_link_libraries(test_tilexr_ep_plan_public_helper_consumer PRIVATE
+        ${TILEXR_PLAN_MULTIRANK_PLANNER_LIB}
+    )
+    set_target_properties(test_tilexr_ep_plan_public_helper_consumer PROPERTIES
+        BUILD_RPATH "${TILEXR_PLAN_MULTIRANK_LIB_SEARCH_DIR};${ASCEND_HOME_PATH}/${ARCH}-linux/lib64;${ASCEND_DRIVER_PATH}/lib64/driver"
+        INSTALL_RPATH "${TILEXR_PLAN_MULTIRANK_LIB_SEARCH_DIR};${ASCEND_HOME_PATH}/${ARCH}-linux/lib64;${ASCEND_DRIVER_PATH}/lib64/driver"
+    )
+    add_test(NAME test_tilexr_ep_plan_public_helper_consumer
+        COMMAND test_tilexr_ep_plan_public_helper_consumer)
+
     add_executable(test_tilexr_ep_plan_multirank
         integration/test_tilexr_ep_plan_multirank.cpp
         ${TILEXR_ROOT}/src/moonep/planner_v2/common/ep_plan_layout.cpp
@@ -358,5 +385,8 @@ if(BUILD_TILEXR_EP_PLAN_MULTIRANK_TEST)
         BUILD_RPATH "${TILEXR_PLAN_MULTIRANK_LIB_SEARCH_DIR};${ASCEND_HOME_PATH}/${ARCH}-linux/lib64;${ASCEND_DRIVER_PATH}/lib64/driver"
         INSTALL_RPATH "${TILEXR_PLAN_MULTIRANK_LIB_SEARCH_DIR};${ASCEND_HOME_PATH}/${ARCH}-linux/lib64;${ASCEND_DRIVER_PATH}/lib64/driver"
     )
-    install(TARGETS test_tilexr_ep_plan_multirank RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS
+        test_tilexr_ep_plan_public_helper_consumer
+        test_tilexr_ep_plan_multirank
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()

@@ -2,6 +2,7 @@
 
 #include <climits>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 
 #include "tilexr_types.h"
@@ -191,7 +192,10 @@ int ValidatePlanWorkspaceBytes(const PlanWorkspaceLayout &layout, uint64_t local
 int TileXRMoeEpPlanV2GetWorkspaceSize(int64_t rankSize, int64_t s, int64_t topK, int64_t expertNum,
     const TileXRMoonEPPlanConfig *config, uint64_t *localWorkspaceBytes, uint64_t *registeredMetaBytes)
 {
-    if (config == nullptr || localWorkspaceBytes == nullptr || registeredMetaBytes == nullptr) {
+    if (config == nullptr || localWorkspaceBytes == nullptr || registeredMetaBytes == nullptr ||
+        reinterpret_cast<uintptr_t>(config) % alignof(TileXRMoonEPPlanConfig) != 0 ||
+        reinterpret_cast<uintptr_t>(localWorkspaceBytes) % alignof(uint64_t) != 0 ||
+        reinterpret_cast<uintptr_t>(registeredMetaBytes) % alignof(uint64_t) != 0) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
     TileXREp::Plan::PlanWorkspaceLayout layout {};

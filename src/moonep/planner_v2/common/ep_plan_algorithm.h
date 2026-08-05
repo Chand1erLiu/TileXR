@@ -32,6 +32,8 @@ struct PlanAlgorithmOutput {
     TILEXR_PLAN_ADDR int32_t *dst;
     TILEXR_PLAN_ADDR int32_t *cuSeqlens;
     TILEXR_PLAN_ADDR int32_t *expertsToCopy;
+    TILEXR_PLAN_ADDR int32_t *remoteExperts;
+    TILEXR_PLAN_ADDR uint64_t *expertTargets;
     TILEXR_PLAN_ADDR int32_t *remoteStats;
     TILEXR_PLAN_ADDR int32_t *status;
 };

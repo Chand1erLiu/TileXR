@@ -61,6 +61,7 @@ TILEXR_PLAN_FN TileXRMoonEPPlanStatus Validate(const PlanAlgorithmInput &in,
         in.topkExperts == nullptr || in.tokensPerExpert == nullptr || in.globalRankIds == nullptr ||
         out.dst == nullptr || out.cuSeqlens == nullptr || out.expertsToCopy == nullptr ||
         out.remoteStats == nullptr || out.status == nullptr ||
+        ((out.remoteExperts == nullptr) != (out.expertTargets == nullptr)) ||
         ws.expertCount == nullptr || ws.rankLoad == nullptr || ws.remainingTpe == nullptr ||
         ws.alloc == nullptr || ws.srcExpertCursor == nullptr || ws.dstExpertCursor == nullptr ||
         ws.expertPhysicalBase == nullptr || ws.localExpertOrdinal == nullptr ||
@@ -398,6 +399,12 @@ TILEXR_PLAN_FN TileXRMoonEPPlanStatus BuildLayouts(State &s, int32_t &maxRemote,
     const int64_t remoteSlotCount = static_cast<int64_t>(s.rankSize) * s.b;
     for (int64_t i = 0; i < remoteSlotCount; ++i) s.ws.remoteExpertSet[i] = -1;
     for (int32_t slot = 0; slot < s.b; ++slot) s.out.expertsToCopy[slot] = -1;
+    const int32_t targetWords = (s.rankSize + 63) / 64;
+    if (s.out.remoteExperts != nullptr) {
+        for (int64_t i = 0; i < remoteSlotCount; ++i) s.out.remoteExperts[i] = -1;
+        for (int64_t i = 0; i < static_cast<int64_t>(s.expertsPerRank) * targetWords; ++i)
+            s.out.expertTargets[i] = 0;
+    }
     for (int64_t g = 0; g < groups; ++g) {
         s.out.cuSeqlens[g] = 0;
     }
@@ -424,6 +431,17 @@ TILEXR_PLAN_FN TileXRMoonEPPlanStatus BuildLayouts(State &s, int32_t &maxRemote,
             if (HomeRank(row[slot], s.expertsPerRank) == s.in.rank) ++s.out.remoteStats[1];
         if (dst == s.in.rank)
             for (int32_t slot = 0; slot < s.b; ++slot) s.out.expertsToCopy[slot] = row[slot];
+        if (s.out.remoteExperts != nullptr) {
+            for (int32_t slot = 0; slot < s.b; ++slot) {
+                const int32_t expert = row[slot];
+                s.out.remoteExperts[static_cast<int64_t>(dst) * s.b + slot] = expert;
+                if (expert >= 0 && HomeRank(expert, s.expertsPerRank) == s.in.rank) {
+                    const int32_t localExpert = expert - s.in.rank * s.expertsPerRank;
+                    s.out.expertTargets[static_cast<int64_t>(localExpert) * targetWords + dst / 64] |=
+                        (1ULL << (dst % 64));
+                }
+            }
+        }
     }
 
     for (int32_t dst = 0; dst < s.rankSize; ++dst) {

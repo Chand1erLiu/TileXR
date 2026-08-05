@@ -98,7 +98,8 @@ void CheckVector(const std::vector<T> &actual, const std::vector<T> &expected,
     }
 }
 
-void CompareScenario(const ReferenceInput &input, const std::string &name)
+void CompareScenario(const ReferenceInput &input, const std::string &name,
+    bool aliasLegacyOutputToCurrentRemoteRow = false)
 {
     ReferenceOutput reference;
     const TileXRMoonEPPlanStatus expectedStatus =
@@ -130,7 +131,12 @@ void CompareScenario(const ReferenceInput &input, const std::string &name)
         std::vector<int32_t> cuSeqlens(static_cast<size_t>(groupCount));
         const int32_t expertsCanary = 0x5a5a5a5a;
         std::vector<int32_t> expertsStorage(static_cast<size_t>(b + 2), expertsCanary);
-        int32_t *expertsToCopy = expertsStorage.data() + 1;
+        std::vector<int32_t> remoteExperts(static_cast<size_t>(rankSize * b), -7);
+        int32_t *expertsToCopy = aliasLegacyOutputToCurrentRemoteRow
+            ? remoteExperts.data() + static_cast<size_t>(rank * b)
+            : expertsStorage.data() + 1;
+        const int32_t targetWords = (rankSize + 63) / 64;
+        std::vector<uint64_t> expertTargets(static_cast<size_t>((expertNum / rankSize) * targetWords), ~0ULL);
         std::vector<int32_t> remoteStats(2);
         std::vector<int32_t> status(TileXREp::Plan::kPlanStatusWords);
 
@@ -149,6 +155,8 @@ void CompareScenario(const ReferenceInput &input, const std::string &name)
         algorithmOutput.dst = dst.data();
         algorithmOutput.cuSeqlens = cuSeqlens.data();
         algorithmOutput.expertsToCopy = expertsToCopy;
+        algorithmOutput.remoteExperts = remoteExperts.data();
+        algorithmOutput.expertTargets = expertTargets.data();
         algorithmOutput.remoteStats = remoteStats.data();
         algorithmOutput.status = status.data();
 
@@ -183,8 +191,22 @@ void CompareScenario(const ReferenceInput &input, const std::string &name)
                 reference.cuSeqlens.begin() + (rank + 1) * groupCount),
                 name + ": cuSeqlens rank " + std::to_string(rank));
         }
-        Check(expertsStorage.front() == expertsCanary && expertsStorage.back() == expertsCanary,
-            name + ": expertsToCopy bounds corrupted at rank " + std::to_string(rank));
+        if (reference.expertsToCopy.size() == static_cast<size_t>(rankSize * b)) {
+            CheckVector(remoteExperts, reference.expertsToCopy,
+                name + ": remoteExperts rank " + std::to_string(rank));
+        }
+        if (reference.expertTargets.size() == static_cast<size_t>(rankSize * (expertNum / rankSize) * targetWords)) {
+            const auto begin = reference.expertTargets.begin() + rank * (expertNum / rankSize) * targetWords;
+            const std::vector<uint64_t> expectedTargets(begin,
+                begin + (expertNum / rankSize) * targetWords);
+            if (expertTargets != expectedTargets) {
+                Check(false, name + ": expertTargets rank " + std::to_string(rank));
+            }
+        }
+        if (!aliasLegacyOutputToCurrentRemoteRow) {
+            Check(expertsStorage.front() == expertsCanary && expertsStorage.back() == expertsCanary,
+                name + ": expertsToCopy bounds corrupted at rank " + std::to_string(rank));
+        }
         if (reference.expertsToCopy.size() == static_cast<size_t>(rankSize * b)) {
             CheckVector(std::vector<int32_t>(expertsToCopy, expertsToCopy + b),
                 std::vector<int32_t>(reference.expertsToCopy.begin() + rank * b,
@@ -243,6 +265,8 @@ void TestNamedV2ScenarioParity()
 
     CompareScenario(MakeHomeLoadInput({120, 80}, {0, 8}, 100, 1),
         "v2-7-single-token-source");
+    CompareScenario(MakeHomeLoadInput({120, 80}, {0, 8}, 100, 1),
+        "v2-metadata-current-rank-row-alias", true);
     CompareScenario(MakeHomeLoadInput({140, 140, 20}, {0, 16, 8}, 100, 2),
         "v2-8-multiple-token-sources");
     CompareScenario(MakeHomeLoadInput({200, 0}, {0, 8}, 100, 1, 1, 100, 20),

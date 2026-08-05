@@ -50,7 +50,13 @@ constexpr size_t kPlannerBarrierBaseBytes =
 constexpr size_t kPlannerBarrierStrideBytes = 512;
 constexpr size_t kBarrierDumpWords = 4;
 
-enum ControlStage : int32_t { COMM_READY = 1, MEMORY_READY = 2, PLAN_DONE = 3, VALIDATION_DONE = 4 };
+enum ControlStage : int32_t {
+    COMM_READY = 1,
+    MEMORY_READY = 2,
+    LEGACY_PLAN_DONE = 3,
+    METADATA_PLAN_DONE = 4,
+    VALIDATION_DONE = 5,
+};
 struct HostPort { std::string host; int port = 0; };
 struct ControlRecord {
     int32_t stage = 0;
@@ -58,12 +64,22 @@ struct ControlRecord {
     int32_t rankSize = 0;
     int32_t success = 0;
     int32_t status = PLAN_ERROR_INTERNAL_INVARIANT;
-    int32_t reserved = 0;
+    int32_t actualDstCount = 0;
     uint64_t requestedEpoch = 0;
     uint64_t committedEpoch = 0;
     uint64_t canonicalDigest = 0;
     uint64_t localOutputDigest = 0;
+    uint64_t globalDigest = 0;
+    int32_t actualDst[kRoutes] = {};
 };
+struct ControlAck {
+    int32_t success = 0;
+    int32_t reserved = 0;
+    uint64_t globalDigest = 0;
+};
+
+bool ValidateGlobalTokenRemap(const std::vector<ControlRecord> &records,
+    int rankSize, uint64_t *globalDigest);
 
 bool CheckAcl(const std::string &op, aclError result)
 {
@@ -250,7 +266,7 @@ int ConnectControl(const HostPort &endpoint)
 }
 
 bool ControlExchange(int rank, int rankSize, ControlStage stage, const ControlRecord &local,
-    std::vector<ControlRecord> *allRecords)
+    std::vector<ControlRecord> *allRecords, uint64_t *globalDigest = nullptr)
 {
     const HostPort endpoint = GetControlEndpoint();
     if (rank == 0) {
@@ -276,6 +292,7 @@ bool ControlExchange(int rank, int rankSize, ControlStage stage, const ControlRe
             clients.push_back(fd);
         }
         if (seen.size() != static_cast<size_t>(rankSize)) ok = false;
+        uint64_t gatheredDigest = 0;
         if (ok && stage == VALIDATION_DONE) {
             const uint64_t canonical = records[0].canonicalDigest;
             const uint64_t requested = records[0].requestedEpoch;
@@ -285,21 +302,27 @@ bool ControlExchange(int rank, int rankSize, ControlStage stage, const ControlRe
                     requested != committed || record.requestedEpoch != requested ||
                     record.committedEpoch != committed || record.canonicalDigest != canonical) ok = false;
             }
+            if (ok) ok = ValidateGlobalTokenRemap(records, rankSize, &gatheredDigest);
+            for (ControlRecord &record : records) record.globalDigest = gatheredDigest;
         } else if (ok) {
             for (const ControlRecord &record : records) if (record.success != 1) ok = false;
         }
-        const int32_t ack = ok ? 1 : 0;
+        ControlAck ack {};
+        ack.success = ok ? 1 : 0;
+        ack.globalDigest = gatheredDigest;
         for (int fd : clients) { (void)SendAll(fd, &ack, sizeof(ack)); close(fd); }
         close(listenFd);
         if (allRecords != nullptr) *allRecords = records;
+        if (globalDigest != nullptr) *globalDigest = gatheredDigest;
         return ok;
     }
     const int fd = ConnectControl(endpoint);
     if (fd < 0) return false;
-    int32_t ack = 0;
+    ControlAck ack {};
     const bool ok = SendAll(fd, &local, sizeof(local)) && RecvAll(fd, &ack, sizeof(ack));
     close(fd);
-    return ok && ack == 1;
+    if (globalDigest != nullptr) *globalDigest = ack.globalDigest;
+    return ok && ack.success == 1;
 }
 
 class DeviceAllocation {
@@ -397,6 +420,107 @@ uint64_t HashVector(uint64_t hash, const std::vector<T> &values)
     hash = HashBytes(hash, &count, sizeof(count));
     if (!values.empty()) hash = HashBytes(hash, values.data(), values.size() * sizeof(T));
     return hash;
+}
+
+bool ValidateGlobalTokenRemap(const std::vector<ControlRecord> &records,
+    int rankSize, uint64_t *globalDigest)
+{
+    if (records.size() != static_cast<size_t>(rankSize)) return false;
+    std::vector<uint64_t> tokenRemap(static_cast<size_t>(rankSize * kNvS),
+        TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID);
+    std::vector<uint64_t> routeIds(static_cast<size_t>(rankSize * kRoutes),
+        TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID);
+    std::vector<int32_t> routeDstRanks(static_cast<size_t>(rankSize * kRoutes), -1);
+    std::vector<int32_t> routeSlots(static_cast<size_t>(rankSize * kRoutes), -1);
+
+    for (int32_t srcRank = 0; srcRank < rankSize; ++srcRank) {
+        const ControlRecord &record = records[static_cast<size_t>(srcRank)];
+        if (record.rank != srcRank || record.actualDstCount != kRoutes) {
+            std::cerr << "rank 0 gathered invalid dst count from rank " << srcRank
+                      << ": " << record.actualDstCount << std::endl;
+            return false;
+        }
+        for (int32_t token = 0; token < kS; ++token) {
+            for (int32_t topKId = 0; topKId < kTopK; ++topKId) {
+                const size_t localRoute = static_cast<size_t>(token * kTopK + topKId);
+                const size_t routeIndex = static_cast<size_t>(srcRank * kRoutes) + localRoute;
+                TileXREp::Plan::MoonEPRouteDescriptor route {};
+                const TileXRMoonEPPlanStatus buildStatus = TileXREp::Plan::BuildMoonEPRouteDescriptor(
+                    srcRank, token, topKId, record.actualDst[localRoute], rankSize, kS, kTopK,
+                    kNvS, &route);
+                if (buildStatus != PLAN_OK) {
+                    std::cerr << "rank 0 failed to build actual route descriptor src=" << srcRank
+                              << " token=" << token << " topk=" << topKId
+                              << " status=" << buildStatus << std::endl;
+                    return false;
+                }
+
+                int32_t decodedRank = -1;
+                int32_t decodedToken = -1;
+                int32_t decodedTopK = -1;
+                if (TileXREp::Plan::DecodeMoonEPGlobalTokenId(route.globalTokenId,
+                    rankSize, kS, kTopK, &decodedRank, &decodedToken, &decodedTopK) != PLAN_OK ||
+                    decodedRank != srcRank || decodedToken != token || decodedTopK != topKId) {
+                    std::cerr << "rank 0 globalTokenId decode mismatch src=" << srcRank
+                              << " token=" << token << " topk=" << topKId << std::endl;
+                    return false;
+                }
+
+                uint64_t &recvSlot = tokenRemap[static_cast<size_t>(route.dstRank * kNvS + route.recvSlot)];
+                if (recvSlot != TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID) {
+                    std::cerr << "rank 0 tokenRemap recvSlot collision dst=" << route.dstRank
+                              << " slot=" << route.recvSlot << " prior_id=" << recvSlot
+                              << " new_id=" << route.globalTokenId << std::endl;
+                    return false;
+                }
+                recvSlot = route.globalTokenId;
+                routeIds[routeIndex] = route.globalTokenId;
+                routeDstRanks[routeIndex] = route.dstRank;
+                routeSlots[routeIndex] = route.recvSlot;
+
+                for (int32_t priorTopK = 0; priorTopK < topKId; ++priorTopK) {
+                    const size_t priorIndex = static_cast<size_t>(srcRank * kRoutes +
+                        token * kTopK + priorTopK);
+                    if (routeIds[priorIndex] == route.globalTokenId ||
+                        (routeDstRanks[priorIndex] == route.dstRank &&
+                         routeSlots[priorIndex] == route.recvSlot)) {
+                        std::cerr << "rank 0 duplicate route did not receive an independent slot/id src="
+                                  << srcRank << " token=" << token << " topk=" << topKId << std::endl;
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    size_t populated = 0;
+    for (uint64_t globalTokenId : tokenRemap) {
+        if (globalTokenId == TILEXR_MOONEP_INVALID_GLOBAL_TOKEN_ID) continue;
+        ++populated;
+        int32_t decodedRank = -1;
+        int32_t decodedToken = -1;
+        int32_t decodedTopK = -1;
+        if (TileXREp::Plan::DecodeMoonEPGlobalTokenId(globalTokenId,
+            rankSize, kS, kTopK, &decodedRank, &decodedToken, &decodedTopK) != PLAN_OK) {
+            std::cerr << "rank 0 failed to decode reconstructed tokenRemap id "
+                      << globalTokenId << std::endl;
+            return false;
+        }
+    }
+    if (populated != static_cast<size_t>(rankSize * kRoutes)) {
+        std::cerr << "rank 0 reconstructed tokenRemap populated " << populated
+                  << " routes, expected " << rankSize * kRoutes << std::endl;
+        return false;
+    }
+
+    uint64_t hash = kFnvOffset;
+    for (const ControlRecord &record : records) {
+        hash = HashBytes(hash, &record.localOutputDigest, sizeof(record.localOutputDigest));
+    }
+    hash = HashVector(hash, tokenRemap);
+    hash = HashVector(hash, routeIds);
+    if (globalDigest != nullptr) *globalDigest = hash;
+    return true;
 }
 
 uint64_t BuildTopologyHash(const std::vector<int32_t> &globalRankIds)
@@ -661,6 +785,7 @@ uint64_t BuildCanonicalDigest(const TileXREp::Plan::ReferenceInput &input,
     hash = HashVector(hash, reference.dst);
     hash = HashVector(hash, reference.cuSeqlens);
     hash = HashVector(hash, reference.expertsToCopy);
+    hash = HashVector(hash, reference.expertTargets);
     hash = HashVector(hash, reference.remoteStats);
     hash = HashVector(hash, reference.statusByRank);
     hash = HashVector(hash, registeredMeta);
@@ -697,19 +822,32 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
     DeviceAllocation topk;
     DeviceAllocation tpe;
     DeviceAllocation globalRankIds;
-    DeviceAllocation dst;
-    DeviceAllocation cuSeqlens;
-    DeviceAllocation expertsToCopy;
-    DeviceAllocation remoteStats;
-    DeviceAllocation dupGroups;
-    DeviceAllocation dupLoffs;
-    DeviceAllocation dupCounts;
-    DeviceAllocation status;
+    DeviceAllocation legacyDst;
+    DeviceAllocation legacyCuSeqlens;
+    DeviceAllocation legacyExpertsToCopy;
+    DeviceAllocation legacyRemoteStats;
+    DeviceAllocation legacyDupGroups;
+    DeviceAllocation legacyDupLoffs;
+    DeviceAllocation legacyDupCounts;
+    DeviceAllocation legacyStatus;
+    DeviceAllocation metadataDst;
+    DeviceAllocation metadataCuSeqlens;
+    DeviceAllocation metadataRemoteExperts;
+    DeviceAllocation metadataExpertTargets;
+    DeviceAllocation metadataRemoteStats;
+    DeviceAllocation metadataDupGroups;
+    DeviceAllocation metadataDupLoffs;
+    DeviceAllocation metadataDupCounts;
+    DeviceAllocation metadataStatus;
     DeviceAllocation localWorkspace;
     AlignedDeviceAllocation registeredMeta;
 
     const size_t dstCount = static_cast<size_t>(kRoutes);
     const size_t groupCount = static_cast<size_t>(input.expertNum + input.config.prefetchSlots);
+    const size_t remoteExpertsCount = static_cast<size_t>(rankSize * input.config.prefetchSlots);
+    const size_t expertsPerRank = rankSize > 0 ? static_cast<size_t>(input.expertNum / rankSize) : 0;
+    const size_t expertTargetWords = static_cast<size_t>((rankSize + 63) / 64);
+    const size_t expertTargetsCount = expertsPerRank * expertTargetWords;
     const std::vector<int32_t> localTopk = prepared ?
         Slice(input.topkExperts, static_cast<size_t>(rank * kRoutes), dstCount) : std::vector<int32_t> {};
     const std::vector<int32_t> localTpe = prepared ?
@@ -723,14 +861,26 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
         prepared = AllocateZero(&topk, localTopk.size() * sizeof(int32_t), "topk") &&
             AllocateZero(&tpe, localTpe.size() * sizeof(int32_t), "tokensPerExpert") &&
             AllocateZero(&globalRankIds, input.globalRankIds.size() * sizeof(int32_t), "globalRankIds") &&
-            AllocateZero(&dst, dstCount * sizeof(int32_t), "dst") &&
-            AllocateZero(&cuSeqlens, groupCount * sizeof(int32_t), "cuSeqlens") &&
-            AllocateZero(&expertsToCopy, static_cast<size_t>(kPrefetchSlots) * sizeof(int32_t), "expertsToCopy") &&
-            AllocateZero(&remoteStats, 2 * sizeof(int32_t), "remoteStats") &&
-            AllocateZero(&dupGroups, sentinelGroups.size() * sizeof(int32_t), "dupGroups") &&
-            AllocateZero(&dupLoffs, sentinelLoffs.size() * sizeof(int32_t), "dupLoffs") &&
-            AllocateZero(&dupCounts, sentinelCounts.size() * sizeof(int32_t), "dupCounts") &&
-            AllocateZero(&status, TileXREp::Plan::kPlanStatusWords * sizeof(int32_t), "status") &&
+            AllocateZero(&legacyDst, dstCount * sizeof(int32_t), "legacyDst") &&
+            AllocateZero(&legacyCuSeqlens, groupCount * sizeof(int32_t), "legacyCuSeqlens") &&
+            AllocateZero(&legacyExpertsToCopy, static_cast<size_t>(kPrefetchSlots) * sizeof(int32_t),
+                "legacyExpertsToCopy") &&
+            AllocateZero(&legacyRemoteStats, 2 * sizeof(int32_t), "legacyRemoteStats") &&
+            AllocateZero(&legacyDupGroups, sentinelGroups.size() * sizeof(int32_t), "legacyDupGroups") &&
+            AllocateZero(&legacyDupLoffs, sentinelLoffs.size() * sizeof(int32_t), "legacyDupLoffs") &&
+            AllocateZero(&legacyDupCounts, sentinelCounts.size() * sizeof(int32_t), "legacyDupCounts") &&
+            AllocateZero(&legacyStatus, TileXREp::Plan::kPlanStatusWords * sizeof(int32_t), "legacyStatus") &&
+            AllocateZero(&metadataDst, dstCount * sizeof(int32_t), "metadataDst") &&
+            AllocateZero(&metadataCuSeqlens, groupCount * sizeof(int32_t), "metadataCuSeqlens") &&
+            AllocateZero(&metadataRemoteExperts, remoteExpertsCount * sizeof(int32_t),
+                "metadataRemoteExperts") &&
+            AllocateZero(&metadataExpertTargets, expertTargetsCount * sizeof(uint64_t),
+                "metadataExpertTargets") &&
+            AllocateZero(&metadataRemoteStats, 2 * sizeof(int32_t), "metadataRemoteStats") &&
+            AllocateZero(&metadataDupGroups, sentinelGroups.size() * sizeof(int32_t), "metadataDupGroups") &&
+            AllocateZero(&metadataDupLoffs, sentinelLoffs.size() * sizeof(int32_t), "metadataDupLoffs") &&
+            AllocateZero(&metadataDupCounts, sentinelCounts.size() * sizeof(int32_t), "metadataDupCounts") &&
+            AllocateZero(&metadataStatus, TileXREp::Plan::kPlanStatusWords * sizeof(int32_t), "metadataStatus") &&
             AllocateZero(&localWorkspace, static_cast<size_t>(localWorkspaceBytes), "localWorkspace") &&
             registeredMeta.Allocate(static_cast<size_t>(registeredMetaBytes),
                 kMetaWorkspaceAlignment, "metaWorkspace") && registeredMeta.Zero("metaWorkspace");
@@ -739,9 +889,12 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
         prepared = CopyH2D(&topk, localTopk, "topk") &&
             CopyH2D(&tpe, localTpe, "tokensPerExpert") &&
             CopyH2D(&globalRankIds, input.globalRankIds, "globalRankIds") &&
-            CopyH2D(&dupGroups, sentinelGroups, "dupGroups sentinel") &&
-            CopyH2D(&dupLoffs, sentinelLoffs, "dupLoffs sentinel") &&
-            CopyH2D(&dupCounts, sentinelCounts, "dupCounts sentinel");
+            CopyH2D(&legacyDupGroups, sentinelGroups, "legacyDupGroups sentinel") &&
+            CopyH2D(&legacyDupLoffs, sentinelLoffs, "legacyDupLoffs sentinel") &&
+            CopyH2D(&legacyDupCounts, sentinelCounts, "legacyDupCounts sentinel") &&
+            CopyH2D(&metadataDupGroups, sentinelGroups, "metadataDupGroups sentinel") &&
+            CopyH2D(&metadataDupLoffs, sentinelLoffs, "metadataDupLoffs sentinel") &&
+            CopyH2D(&metadataDupCounts, sentinelCounts, "metadataDupCounts sentinel");
     }
 
     TileXR::CommArgs *commArgs = nullptr;
@@ -771,58 +924,108 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
         std::cerr << "rank " << rank << " stage MEMORY_READY leave prepared=" << prepared << std::endl;
     }
 
-    const uint64_t epoch = kEpochBase + static_cast<uint64_t>(rankSize);
-    TileXRMoonEPPlanDesc plan {};
-    plan.dst = reinterpret_cast<int32_t *>(dst.data());
-    plan.cuSeqlens = reinterpret_cast<int32_t *>(cuSeqlens.data());
-    plan.expertsToCopy = reinterpret_cast<int32_t *>(expertsToCopy.data());
-    plan.remoteStats = reinterpret_cast<int32_t *>(remoteStats.data());
-    plan.dupGroups = reinterpret_cast<int32_t *>(dupGroups.data());
-    plan.dupLoffs = reinterpret_cast<int32_t *>(dupLoffs.data());
-    plan.dupCounts = reinterpret_cast<int32_t *>(dupCounts.data());
-    plan.status = reinterpret_cast<int32_t *>(status.data());
-    plan.s = input.s;
-    plan.k = input.topK;
-    plan.r = rankSize;
-    plan.e = input.expertNum;
-    plan.b = input.config.prefetchSlots;
-    plan.cap = input.config.rankTokenCapacity;
-    plan.nvS = input.config.nvS;
-    plan.tokenPadding = input.config.tokenPadding;
-    plan.epoch = epoch;
+    const uint64_t legacyEpoch = kEpochBase + static_cast<uint64_t>(rankSize);
+    const uint64_t metadataEpoch = legacyEpoch + 1;
+    TileXRMoonEPPlanDesc legacyPlan {};
+    legacyPlan.dst = reinterpret_cast<int32_t *>(legacyDst.data());
+    legacyPlan.cuSeqlens = reinterpret_cast<int32_t *>(legacyCuSeqlens.data());
+    legacyPlan.expertsToCopy = reinterpret_cast<int32_t *>(legacyExpertsToCopy.data());
+    legacyPlan.remoteStats = reinterpret_cast<int32_t *>(legacyRemoteStats.data());
+    legacyPlan.dupGroups = reinterpret_cast<int32_t *>(legacyDupGroups.data());
+    legacyPlan.dupLoffs = reinterpret_cast<int32_t *>(legacyDupLoffs.data());
+    legacyPlan.dupCounts = reinterpret_cast<int32_t *>(legacyDupCounts.data());
+    legacyPlan.status = reinterpret_cast<int32_t *>(legacyStatus.data());
+    legacyPlan.s = input.s;
+    legacyPlan.k = input.topK;
+    legacyPlan.r = rankSize;
+    legacyPlan.e = input.expertNum;
+    legacyPlan.b = input.config.prefetchSlots;
+    legacyPlan.cap = input.config.rankTokenCapacity;
+    legacyPlan.nvS = input.config.nvS;
+    legacyPlan.tokenPadding = input.config.tokenPadding;
+    legacyPlan.epoch = legacyEpoch;
 
-    int launchResult = TileXR::TILEXR_ERROR_INTERNAL;
-    bool planDone = false;
+    int legacyLaunchResult = TileXR::TILEXR_ERROR_INTERNAL;
+    bool legacyPlanDone = false;
     if (prepared) {
         if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr) {
-            std::cerr << "rank " << rank << " stage PLAN_LAUNCH enter" << std::endl;
+            std::cerr << "rank " << rank << " stage LEGACY_PLAN_LAUNCH enter" << std::endl;
         }
-        launchResult = TileXRMoeEpPlanV2(reinterpret_cast<const int32_t *>(topk.data()),
+        legacyLaunchResult = TileXRMoeEpPlanV2(reinterpret_cast<const int32_t *>(topk.data()),
             reinterpret_cast<const int32_t *>(tpe.data()),
             reinterpret_cast<const int32_t *>(globalRankIds.data()), comm,
-            input.s, input.topK, input.expertNum, &input.config, &plan,
+            input.s, input.topK, input.expertNum, &input.config, &legacyPlan,
             localWorkspace.data(), localWorkspaceBytes, registeredMeta.data(), registeredMetaBytes, stream);
-        if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr) {
-            std::cerr << "rank " << rank << " stage PLAN_LAUNCH leave rc=" << launchResult << std::endl;
-        }
-        if (CheckTileXR("TileXRMoeEpPlanV2", launchResult)) {
-            if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr) {
-                std::cerr << "rank " << rank << " stage PLAN_SYNC enter" << std::endl;
-            }
-            const aclError syncResult = aclrtSynchronizeStream(stream);
-            if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr) {
-                std::cerr << "rank " << rank << " stage PLAN_SYNC leave rc=" << syncResult << std::endl;
-            }
-            planDone = CheckAcl("aclrtSynchronizeStream(plan)", syncResult);
+        if (CheckTileXR("TileXRMoeEpPlanV2(legacy)", legacyLaunchResult)) {
+            legacyPlanDone = CheckAcl("aclrtSynchronizeStream(legacy plan)",
+                aclrtSynchronizeStream(stream));
         }
     }
 
-    ControlRecord planRecord {};
-    planRecord.stage = PLAN_DONE;
-    planRecord.rank = rank;
-    planRecord.rankSize = rankSize;
-    planRecord.success = planDone ? 1 : 0;
-    if (!ControlExchange(rank, rankSize, PLAN_DONE, planRecord, nullptr)) planDone = false;
+    ControlRecord legacyPlanRecord {};
+    legacyPlanRecord.stage = LEGACY_PLAN_DONE;
+    legacyPlanRecord.rank = rank;
+    legacyPlanRecord.rankSize = rankSize;
+    legacyPlanRecord.success = legacyPlanDone ? 1 : 0;
+    if (!ControlExchange(rank, rankSize, LEGACY_PLAN_DONE, legacyPlanRecord, nullptr)) {
+        legacyPlanDone = false;
+    }
+
+    TileXRMoonEPPlanMetadataV2 metadata {};
+    metadata.structSize = sizeof(metadata);
+    metadata.abiVersion = TILEXR_MOONEP_PLAN_METADATA_V2_ABI_VERSION;
+    metadata.dst = reinterpret_cast<int32_t *>(metadataDst.data());
+    metadata.dstCount = dstCount;
+    metadata.cuSeqlens = reinterpret_cast<int32_t *>(metadataCuSeqlens.data());
+    metadata.cuSeqlensCount = groupCount;
+    metadata.remoteExperts = reinterpret_cast<int32_t *>(metadataRemoteExperts.data());
+    metadata.remoteExpertsCount = remoteExpertsCount;
+    metadata.expertTargets = reinterpret_cast<uint64_t *>(metadataExpertTargets.data());
+    metadata.expertTargetsCount = expertTargetsCount;
+    metadata.remoteStats = reinterpret_cast<int32_t *>(metadataRemoteStats.data());
+    metadata.remoteStatsCount = 2;
+    metadata.status = reinterpret_cast<int32_t *>(metadataStatus.data());
+    metadata.statusCount = TileXREp::Plan::kPlanStatusWords;
+    metadata.dupGroups = reinterpret_cast<int32_t *>(metadataDupGroups.data());
+    metadata.dupGroupsCount = sentinelGroups.size();
+    metadata.dupLoffs = reinterpret_cast<int32_t *>(metadataDupLoffs.data());
+    metadata.dupLoffsCount = sentinelLoffs.size();
+    metadata.dupCounts = reinterpret_cast<int32_t *>(metadataDupCounts.data());
+    metadata.dupCountsCount = sentinelCounts.size();
+    metadata.s = input.s;
+    metadata.k = input.topK;
+    metadata.r = rankSize;
+    metadata.e = input.expertNum;
+    metadata.b = input.config.prefetchSlots;
+    metadata.nvS = input.config.nvS;
+    metadata.epoch = metadataEpoch;
+
+    int metadataLaunchResult = TileXR::TILEXR_ERROR_INTERNAL;
+    bool metadataPlanDone = false;
+    if (legacyPlanDone) {
+        if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr) {
+            std::cerr << "rank " << rank << " stage METADATA_PLAN_LAUNCH enter" << std::endl;
+        }
+        metadataLaunchResult = TileXRMoeEpPlanV2WithMetadata(
+            reinterpret_cast<const int32_t *>(topk.data()),
+            reinterpret_cast<const int32_t *>(tpe.data()),
+            reinterpret_cast<const int32_t *>(globalRankIds.data()), comm,
+            input.s, input.topK, input.expertNum, &input.config, &metadata,
+            localWorkspace.data(), localWorkspaceBytes, registeredMeta.data(), registeredMetaBytes, stream);
+        if (CheckTileXR("TileXRMoeEpPlanV2WithMetadata", metadataLaunchResult)) {
+            metadataPlanDone = CheckAcl("aclrtSynchronizeStream(metadata plan)",
+                aclrtSynchronizeStream(stream));
+        }
+    }
+
+    ControlRecord metadataPlanRecord {};
+    metadataPlanRecord.stage = METADATA_PLAN_DONE;
+    metadataPlanRecord.rank = rank;
+    metadataPlanRecord.rankSize = rankSize;
+    metadataPlanRecord.success = metadataPlanDone ? 1 : 0;
+    if (!ControlExchange(rank, rankSize, METADATA_PLAN_DONE, metadataPlanRecord, nullptr)) {
+        metadataPlanDone = false;
+    }
     if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr) {
         DumpPlannerBarrierSlots(rank, rankSize, commArgs, kPlannerBarrierPhaseData);
         DumpPlannerBarrierSlots(rank, rankSize, commArgs, 2);
@@ -830,69 +1033,47 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
         DumpPlannerPeerStatuses(rank, rankSize, input.expertNum, commArgs);
     }
 
+    std::vector<int32_t> legacyActualDst(dstCount, 0);
+    std::vector<int32_t> legacyActualCu(groupCount, 0);
+    std::vector<int32_t> legacyActualExperts(static_cast<size_t>(kPrefetchSlots), 0);
+    std::vector<int32_t> legacyActualRemote(2, 0);
+    std::vector<int32_t> legacyActualGroups(sentinelGroups.size(), 0);
+    std::vector<int32_t> legacyActualLoffs(sentinelLoffs.size(), 0);
+    std::vector<int32_t> legacyActualCounts(sentinelCounts.size(), 0);
+    std::vector<int32_t> legacyActualStatus(TileXREp::Plan::kPlanStatusWords, 0);
     std::vector<int32_t> actualDst(dstCount, 0);
     std::vector<int32_t> actualCu(groupCount, 0);
-    std::vector<int32_t> actualExperts(static_cast<size_t>(kPrefetchSlots), 0);
+    std::vector<int32_t> actualRemoteExperts(remoteExpertsCount, 0);
+    std::vector<uint64_t> actualExpertTargets(expertTargetsCount, 0);
     std::vector<int32_t> actualRemote(2, 0);
     std::vector<int32_t> actualGroups(sentinelGroups.size(), 0);
     std::vector<int32_t> actualLoffs(sentinelLoffs.size(), 0);
     std::vector<int32_t> actualCounts(sentinelCounts.size(), 0);
     std::vector<int32_t> actualStatus(TileXREp::Plan::kPlanStatusWords, 0);
-    std::vector<uint8_t> actualMeta;
-    bool valid = false;
+    std::vector<uint8_t> actualMeta(static_cast<size_t>(registeredMetaBytes), 0);
 
-
-    if (planDone) {
-        actualMeta.assign(static_cast<size_t>(registeredMetaBytes), 0);
-        valid = CopyD2H(&actualDst, dst, "dst") &&
-            CopyD2H(&actualCu, cuSeqlens, "cuSeqlens") &&
-            CopyD2H(&actualExperts, expertsToCopy, "expertsToCopy") &&
-            CopyD2H(&actualRemote, remoteStats, "remoteStats") &&
-            CopyD2H(&actualGroups, dupGroups, "dupGroups") &&
-            CopyD2H(&actualLoffs, dupLoffs, "dupLoffs") &&
-            CopyD2H(&actualCounts, dupCounts, "dupCounts") &&
-            CopyD2H(&actualStatus, status, "status") &&
-            CheckAcl("aclrtMemcpy D2H(registeredMeta)", aclrtMemcpy(actualMeta.data(), actualMeta.size(),
-                registeredMeta.data(), registeredMetaBytes, ACL_MEMCPY_DEVICE_TO_HOST));
-    } else {
-        actualMeta.assign(static_cast<size_t>(registeredMetaBytes), 0);
-        (void)CheckAcl("aclrtMemcpy D2H(metaWorkspace after plan failure)",
-            aclrtMemcpy(actualMeta.data(), actualMeta.size(), registeredMeta.data(),
-                registeredMetaBytes, ACL_MEMCPY_DEVICE_TO_HOST));
-        valid = false;
-    }
-
-    if (std::getenv("TILEXR_PLAN_DEBUG") != nullptr && !actualMeta.empty()) {
-        const TileXREp::Plan::PlanEpochState debugEpoch =
-            LoadMeta<TileXREp::Plan::PlanEpochState>(actualMeta, layout.registeredMeta.epochState.offset);
-        std::cerr << "rank " << rank << " planner debug status=";
-        for (size_t word = 0; word < actualStatus.size(); ++word) {
-            std::cerr << (word == 0 ? "[" : ",") << actualStatus[word];
-        }
-        if (actualStatus.size() >= 8 && actualStatus[0] != 0) {
-            const uint64_t publishSelfAddress =
-                static_cast<uint64_t>(static_cast<uint32_t>(actualStatus[4])) |
-                (static_cast<uint64_t>(static_cast<uint32_t>(actualStatus[5])) << 32U);
-            const uint64_t publishRemoteAddress =
-                static_cast<uint64_t>(static_cast<uint32_t>(actualStatus[6])) |
-                (static_cast<uint64_t>(static_cast<uint32_t>(actualStatus[7])) << 32U);
-            std::cerr << " barrier_debug={build_tag=0x" << std::hex
-                      << static_cast<uint32_t>(actualStatus[1]) << std::dec
-                      << ",phase=" << actualStatus[2]
-                      << ",peer=" << actualStatus[3]
-                      << ",publish_self=0x" << std::hex << publishSelfAddress
-                      << ",publish_remote=0x" << publishRemoteAddress << std::dec << "}";
-        }
-        std::cerr << "] gathered_global_rank_ids=[";
-        for (int peer = 0; peer < rankSize; ++peer) {
-            std::cerr << (peer == 0 ? "" : ",") << LoadMeta<int32_t>(actualMeta,
-                layout.registeredMeta.globalRankIds.offset + static_cast<uint64_t>(peer) * sizeof(int32_t));
-        }
-        std::cerr << "] requested_epoch=" << debugEpoch.requestedEpoch
-                  << " committed_epoch=" << debugEpoch.committedEpoch
-                  << " topology_hash=0x" << std::hex << debugEpoch.topologyHash << std::dec
-                  << " cache_state=" << debugEpoch.reserved << std::endl;
-    }
+    bool legacyRead = legacyPlanDone &&
+        CopyD2H(&legacyActualDst, legacyDst, "legacy dst") &&
+        CopyD2H(&legacyActualCu, legacyCuSeqlens, "legacy cuSeqlens") &&
+        CopyD2H(&legacyActualExperts, legacyExpertsToCopy, "legacy expertsToCopy") &&
+        CopyD2H(&legacyActualRemote, legacyRemoteStats, "legacy remoteStats") &&
+        CopyD2H(&legacyActualGroups, legacyDupGroups, "legacy dupGroups") &&
+        CopyD2H(&legacyActualLoffs, legacyDupLoffs, "legacy dupLoffs") &&
+        CopyD2H(&legacyActualCounts, legacyDupCounts, "legacy dupCounts") &&
+        CopyD2H(&legacyActualStatus, legacyStatus, "legacy status");
+    bool metadataRead = metadataPlanDone &&
+        CopyD2H(&actualDst, metadataDst, "metadata dst") &&
+        CopyD2H(&actualCu, metadataCuSeqlens, "metadata cuSeqlens") &&
+        CopyD2H(&actualRemoteExperts, metadataRemoteExperts, "metadata remoteExperts") &&
+        CopyD2H(&actualExpertTargets, metadataExpertTargets, "metadata expertTargets") &&
+        CopyD2H(&actualRemote, metadataRemoteStats, "metadata remoteStats") &&
+        CopyD2H(&actualGroups, metadataDupGroups, "metadata dupGroups") &&
+        CopyD2H(&actualLoffs, metadataDupLoffs, "metadata dupLoffs") &&
+        CopyD2H(&actualCounts, metadataDupCounts, "metadata dupCounts") &&
+        CopyD2H(&actualStatus, metadataStatus, "metadata status") &&
+        CheckAcl("aclrtMemcpy D2H(registeredMeta)", aclrtMemcpy(actualMeta.data(), actualMeta.size(),
+            registeredMeta.data(), registeredMetaBytes, ACL_MEMCPY_DEVICE_TO_HOST));
+    bool valid = legacyRead && metadataRead;
 
     uint64_t requestedEpoch = 0;
     uint64_t committedEpoch = 0;
@@ -901,34 +1082,81 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
             static_cast<size_t>(rank * kRoutes), dstCount);
         const std::vector<int32_t> expectedCu = Slice(reference.cuSeqlens,
             static_cast<size_t>(rank) * groupCount, groupCount);
-        const std::vector<int32_t> expectedExperts = Slice(reference.expertsToCopy,
+        const std::vector<int32_t> expectedLegacyExperts = Slice(reference.expertsToCopy,
             static_cast<size_t>(rank * kPrefetchSlots), static_cast<size_t>(kPrefetchSlots));
         const std::vector<int32_t> expectedRemote = Slice(reference.remoteStats,
             static_cast<size_t>(rank * 2), 2);
         const std::vector<int32_t> expectedStatus = Slice(reference.statusByRank,
             static_cast<size_t>(rank * TileXREp::Plan::kPlanStatusWords),
             static_cast<size_t>(TileXREp::Plan::kPlanStatusWords));
-        valid = CompareVector("dst", actualDst, expectedDst, rank) &&
-            CompareVector("cuSeqlens", actualCu, expectedCu, rank) &&
-            CompareVector("expertsToCopy", actualExperts, expectedExperts, rank) &&
-            CompareVector("remoteStats", actualRemote, expectedRemote, rank) &&
-            CompareVector("status", actualStatus, expectedStatus, rank) &&
+        const std::vector<uint64_t> expectedExpertTargets = Slice(reference.expertTargets,
+            static_cast<size_t>(rank) * expertTargetsCount, expertTargetsCount);
+        const std::vector<int32_t> metadataLegacySlice = Slice(actualRemoteExperts,
+            static_cast<size_t>(rank * kPrefetchSlots), static_cast<size_t>(kPrefetchSlots));
+        std::vector<uint64_t> rebuiltExpertTargets(expertTargetsCount, 0);
+        const TileXRMoonEPPlanStatus rebuildStatus = TileXREp::Plan::BuildMoonEPExpertTargets(
+            actualRemoteExperts.data(), rankSize, input.expertNum, input.config.prefetchSlots,
+            rank, rebuiltExpertTargets.data(), rebuiltExpertTargets.size());
+
+        valid = CompareVector("legacy dst", legacyActualDst, expectedDst, rank) &&
+            CompareVector("legacy cuSeqlens", legacyActualCu, expectedCu, rank) &&
+            CompareVector("legacy expertsToCopy", legacyActualExperts, expectedLegacyExperts, rank) &&
+            CompareVector("legacy remoteStats", legacyActualRemote, expectedRemote, rank) &&
+            CompareVector("legacy status", legacyActualStatus, expectedStatus, rank) &&
+            legacyActualStatus[0] == PLAN_OK && legacyActualStatus[2] > 0 &&
+            ValidateDownstreamMetadata(rank, input, reference,
+                legacyActualGroups, legacyActualLoffs, legacyActualCounts) &&
+            CompareVector("metadata dst", actualDst, expectedDst, rank) &&
+            CompareVector("metadata cuSeqlens", actualCu, expectedCu, rank) &&
+            CompareVector("metadata remoteExperts", actualRemoteExperts, reference.expertsToCopy, rank) &&
+            CompareVector("metadata expertTargets", actualExpertTargets, expectedExpertTargets, rank) &&
+            CompareVector("metadata remoteExperts compatibility slice",
+                metadataLegacySlice, legacyActualExperts, rank) &&
+            rebuildStatus == PLAN_OK &&
+            CompareVector("metadata rebuilt expertTargets",
+                actualExpertTargets, rebuiltExpertTargets, rank) &&
+            CompareVector("metadata remoteStats", actualRemote, expectedRemote, rank) &&
+            CompareVector("metadata status", actualStatus, expectedStatus, rank) &&
             actualStatus[0] == PLAN_OK && actualStatus[2] > 0 &&
             ValidateDownstreamMetadata(rank, input, reference,
                 actualGroups, actualLoffs, actualCounts) &&
-            ValidateMetaWorkspace(rank, input, reference, epoch, layout, actualMeta,
+            ValidateMetaWorkspace(rank, input, reference, metadataEpoch, layout, actualMeta,
                 &requestedEpoch, &committedEpoch);
+        if (rebuildStatus != PLAN_OK) {
+            std::cerr << "rank " << rank << " BuildMoonEPExpertTargets(actual remoteExperts) failed with status "
+                      << rebuildStatus << std::endl;
+        }
+        if (legacyActualStatus.size() > 2 && legacyActualStatus[2] <= 0) {
+            std::cerr << "rank " << rank << " legacy validation did not exercise an inter-server round"
+                      << std::endl;
+        }
         if (actualStatus.size() > 2 && actualStatus[2] <= 0) {
-            std::cerr << "rank " << rank << " validation input did not exercise an inter-server round" << std::endl;
+            std::cerr << "rank " << rank << " metadata validation did not exercise an inter-server round"
+                      << std::endl;
         }
     }
 
     uint64_t localDigest = kFnvOffset;
+    localDigest = HashVector(localDigest, legacyActualDst);
+    localDigest = HashVector(localDigest, legacyActualCu);
+    localDigest = HashVector(localDigest, legacyActualExperts);
+    localDigest = HashVector(localDigest, legacyActualRemote);
+    localDigest = HashVector(localDigest, legacyActualGroups);
+    localDigest = HashVector(localDigest, legacyActualLoffs);
+    localDigest = HashVector(localDigest, legacyActualCounts);
+    localDigest = HashVector(localDigest, legacyActualStatus);
     localDigest = HashVector(localDigest, actualDst);
     localDigest = HashVector(localDigest, actualCu);
-    localDigest = HashVector(localDigest, actualExperts);
+    localDigest = HashVector(localDigest, actualRemoteExperts);
+    localDigest = HashVector(localDigest, actualExpertTargets);
     localDigest = HashVector(localDigest, actualRemote);
+    localDigest = HashVector(localDigest, actualGroups);
+    localDigest = HashVector(localDigest, actualLoffs);
+    localDigest = HashVector(localDigest, actualCounts);
     localDigest = HashVector(localDigest, actualStatus);
+    localDigest = HashVector(localDigest, actualMeta);
+    localDigest = HashBytes(localDigest, &legacyEpoch, sizeof(legacyEpoch));
+    localDigest = HashBytes(localDigest, &metadataEpoch, sizeof(metadataEpoch));
     const uint64_t canonicalDigest = actualMeta.empty() ? 0 :
         BuildCanonicalDigest(input, reference, actualMeta);
 
@@ -938,13 +1166,20 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
     validationRecord.rankSize = rankSize;
     validationRecord.success = valid ? 1 : 0;
     validationRecord.status = actualStatus.empty() ? PLAN_ERROR_INTERNAL_INVARIANT : actualStatus[0];
+    validationRecord.actualDstCount = actualDst.size() == static_cast<size_t>(kRoutes) ?
+        static_cast<int32_t>(kRoutes) : 0;
+    if (validationRecord.actualDstCount == kRoutes) {
+        std::copy(actualDst.begin(), actualDst.end(), validationRecord.actualDst);
+    }
     validationRecord.requestedEpoch = requestedEpoch;
     validationRecord.committedEpoch = committedEpoch;
     validationRecord.canonicalDigest = canonicalDigest;
     validationRecord.localOutputDigest = localDigest;
     std::vector<ControlRecord> allRecords;
+    uint64_t globalDigest = 0;
     const bool globallyValid = ControlExchange(rank, rankSize, VALIDATION_DONE,
-        validationRecord, rank == 0 ? &allRecords : nullptr);
+        validationRecord, rank == 0 ? &allRecords : nullptr, &globalDigest);
+    validationRecord.globalDigest = globalDigest;
     valid = valid && globallyValid;
 
     if (rank == 0 && globallyValid) {
@@ -952,12 +1187,14 @@ bool RunValidation(int rank, int rankSize, TileXRCommPtr comm, aclrtStream strea
         std::cout << "PLAN_GLOBAL_SUMMARY rankSize=" << rankSize
                   << " requested_epoch=" << requestedEpoch
                   << " committed_epoch=" << committedEpoch
-                  << " canonical_digest=0x" << std::hex << canonicalDigest << std::dec << std::endl;
+                  << " canonical_digest=0x" << std::hex << canonicalDigest
+                  << " global_digest=0x" << globalDigest << std::dec << std::endl;
         for (const ControlRecord &record : allRecords) {
             std::cout << "PLAN_RANK_SUMMARY rank=" << record.rank
                       << " status=" << record.status
                       << " local_output_digest=0x" << std::hex << record.localOutputDigest
-                      << " canonical_digest=0x" << record.canonicalDigest << std::dec << std::endl;
+                      << " canonical_digest=0x" << record.canonicalDigest
+                      << " global_digest=0x" << record.globalDigest << std::dec << std::endl;
         }
     }
 
@@ -972,9 +1209,9 @@ int main(int argc, char **argv)
     const int rankSize = argc > 1 ? std::atoi(argv[1]) : GetEnvInt("RANK_SIZE", 8);
     const int rank = argc > 2 ? std::atoi(argv[2]) : GetEnvInt("RANK", 0);
     const int deviceId = argc > 3 ? std::atoi(argv[3]) : GetEnvInt("DEVICE_ID", rank % 8);
-    if ((rankSize != 2 && rankSize != 8 && rankSize != 32) || rank < 0 || rank >= rankSize ||
+    if ((rankSize != 2 && rankSize != 8 && rankSize != 32 && rankSize != 128) || rank < 0 || rank >= rankSize ||
         deviceId < 0 || deviceId >= 8) {
-        std::cerr << "usage: test_tilexr_ep_plan_multirank <2|8|32> <rank> <device 0..7>" << std::endl;
+        std::cerr << "usage: test_tilexr_ep_plan_multirank <2|8|32|128> <rank> <device 0..7>" << std::endl;
         return 2;
     }
 
@@ -1063,7 +1300,8 @@ int main(int argc, char **argv)
                   << " requested_epoch=" << finalRecord.requestedEpoch
                   << " committed_epoch=" << finalRecord.committedEpoch
                   << " local_output_digest=0x" << std::hex << finalRecord.localOutputDigest
-                  << " canonical_digest=0x" << finalRecord.canonicalDigest << std::dec << std::endl;
+                  << " canonical_digest=0x" << finalRecord.canonicalDigest
+                  << " global_digest=0x" << finalRecord.globalDigest << std::dec << std::endl;
         return 0;
     }
     std::cerr << "PLAN_VALIDATION_FAIL rank=" << rank << " rankSize=" << rankSize

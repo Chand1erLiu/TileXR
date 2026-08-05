@@ -134,7 +134,16 @@ int ValidatePlanHostArguments(
         arguments.waitIterations == 0 || arguments.stream == nullptr || runtime.hostCommArgs == nullptr) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
-    if (!ValidInt32Pointer(arguments.topkExperts) || !ValidInt32Pointer(arguments.tokensPerExpert) ||
+    if (!IsAligned(arguments.config, alignof(TileXRMoonEPPlanConfig)) ||
+        !IsAligned(arguments.plan, alignof(TileXRMoonEPPlanDesc))) {
+        return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
+    }
+    const bool hasRemoteExperts = arguments.remoteExperts != nullptr;
+    const bool hasExpertTargets = arguments.expertTargets != nullptr;
+    if (hasRemoteExperts != hasExpertTargets ||
+        (hasRemoteExperts && (!ValidInt32Pointer(arguments.remoteExperts) ||
+            !IsAligned(arguments.expertTargets, alignof(uint64_t)))) ||
+        !ValidInt32Pointer(arguments.topkExperts) || !ValidInt32Pointer(arguments.tokensPerExpert) ||
         !ValidInt32Pointer(arguments.globalRankIds) || !ValidPlanPointers(*arguments.plan) ||
         !IsAligned(arguments.localWorkspace, kPlanWorkspaceAlignment) ||
         !IsAligned(arguments.registeredMetaWorkspace, kPlanWorkspaceAlignment)) {

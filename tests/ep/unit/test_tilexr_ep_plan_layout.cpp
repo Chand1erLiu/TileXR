@@ -61,6 +61,25 @@ void TestPublicQueryMatchesLayout()
     Check(ret == TileXR::TILEXR_SUCCESS, "public workspace query must succeed");
     Check(localBytes == layout.local.totalBytes, "public local bytes mismatch");
     Check(registeredBytes == layout.registeredMeta.totalBytes, "public registered bytes mismatch");
+
+    alignas(TileXRMoonEPPlanConfig) unsigned char configStorage[sizeof(TileXRMoonEPPlanConfig) + 1] = {};
+    const TileXRMoonEPPlanConfig *misalignedConfig =
+        reinterpret_cast<const TileXRMoonEPPlanConfig *>(configStorage + 1);
+    Check(TileXRMoeEpPlanV2GetWorkspaceSize(8, 8, 2, 16, misalignedConfig,
+        &localBytes, &registeredBytes) == TileXR::TILEXR_ERROR_PARA_CHECK_FAIL,
+        "misaligned public config pointer must fail before dereference");
+
+    alignas(uint64_t) unsigned char localStorage[sizeof(uint64_t) + 1] = {};
+    uint64_t *misalignedLocalBytes = reinterpret_cast<uint64_t *>(localStorage + 1);
+    Check(TileXRMoeEpPlanV2GetWorkspaceSize(8, 8, 2, 16, &config,
+        misalignedLocalBytes, &registeredBytes) == TileXR::TILEXR_ERROR_PARA_CHECK_FAIL,
+        "misaligned local workspace-size output must fail before write");
+
+    alignas(uint64_t) unsigned char registeredStorage[sizeof(uint64_t) + 1] = {};
+    uint64_t *misalignedRegisteredBytes = reinterpret_cast<uint64_t *>(registeredStorage + 1);
+    Check(TileXRMoeEpPlanV2GetWorkspaceSize(8, 8, 2, 16, &config,
+        &localBytes, misalignedRegisteredBytes) == TileXR::TILEXR_ERROR_PARA_CHECK_FAIL,
+        "misaligned registered workspace-size output must fail before write");
 }
 
 void TestInvalidShapes()

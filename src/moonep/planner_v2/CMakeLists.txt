@@ -90,6 +90,7 @@ add_custom_target(tilexr_moonep_planner_kernel ALL
 
 add_library(tilexr-moonep-planner SHARED
     common/ep_plan_layout.cpp
+    common/ep_plan_downstream.cpp
     host/ep_plan_host.cpp
     host/planner_layout.cpp
     host/planner_host.cpp

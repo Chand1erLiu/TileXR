@@ -19,6 +19,8 @@ struct PlanHostArguments {
     int64_t expertNum;
     const TileXRMoonEPPlanConfig *config;
     const TileXRMoonEPPlanDesc *plan;
+    int32_t *remoteExperts;
+    uint64_t *expertTargets;
     void *localWorkspace;
     uint64_t localWorkspaceBytes;
     void *registeredMetaWorkspace;

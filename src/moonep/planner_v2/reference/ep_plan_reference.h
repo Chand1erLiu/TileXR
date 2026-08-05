@@ -49,7 +49,8 @@ struct ReferenceOutput {
     TileXRMoonEPPlanStatus finalStatus = PLAN_OK;
     std::vector<int32_t> dst;
     std::vector<int32_t> cuSeqlens;
-    std::vector<int32_t> expertsToCopy;
+    std::vector<int32_t> expertsToCopy; // compatibility alias: remoteExperts [R,B]
+    std::vector<uint64_t> expertTargets; // [R,E/R,ceil(R/64)], owner-major
     std::vector<int32_t> remoteStats;
     std::vector<int32_t> statusByRank;
     std::vector<int32_t> rankLoad;

@@ -31,6 +31,8 @@ struct PlanLaunchCapture {
     GM_ADDR dst = nullptr;
     GM_ADDR cuSeqlens = nullptr;
     GM_ADDR expertsToCopy = nullptr;
+    GM_ADDR remoteExperts = nullptr;
+    GM_ADDR expertTargets = nullptr;
     GM_ADDR remoteStats = nullptr;
     GM_ADDR status = nullptr;
     GM_ADDR localWorkspace = nullptr;
@@ -92,7 +94,8 @@ extern "C" aclError aclrtMemcpyAsync(void *dst, size_t destMax, const void *src,
 
 rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR commArgs,
     GM_ADDR topkExperts, GM_ADDR tokensPerExpert, GM_ADDR globalRankIds, GM_ADDR dst,
-    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteStats, GM_ADDR status,
+    GM_ADDR cuSeqlens, GM_ADDR expertsToCopy, GM_ADDR remoteExperts, GM_ADDR expertTargets,
+    GM_ADDR remoteStats, GM_ADDR status,
     GM_ADDR localWorkspace, GM_ADDR metaWorkspace, int64_t rank, int64_t rankSize,
     int64_t s, int64_t topK, int64_t expertNum, int64_t, int64_t, int64_t, int64_t,
     int64_t, int32_t, int32_t, int32_t, uint64_t epoch, uint64_t waitIterations,
@@ -108,6 +111,8 @@ rtError_t launch_tilexr_ep_plan_kernel(uint32_t blockDim, void *stream, GM_ADDR 
     g_launchCapture.dst = dst;
     g_launchCapture.cuSeqlens = cuSeqlens;
     g_launchCapture.expertsToCopy = expertsToCopy;
+    g_launchCapture.remoteExperts = remoteExperts;
+    g_launchCapture.expertTargets = expertTargets;
     g_launchCapture.remoteStats = remoteStats;
     g_launchCapture.status = status;
     g_launchCapture.localWorkspace = localWorkspace;
@@ -159,6 +164,40 @@ TileXRMoonEPPlanDesc ValidPlan(const TileXRMoonEPPlanConfig &config)
     plan.tokenPadding = config.tokenPadding;
     plan.epoch = 7;
     return plan;
+}
+
+TileXRMoonEPPlanMetadataV2 ValidMetadata(const TileXRMoonEPPlanConfig &config,
+    const TileXRMoonEPPlanDesc &plan)
+{
+    TileXRMoonEPPlanMetadataV2 metadata {};
+    metadata.structSize = sizeof(metadata);
+    metadata.abiVersion = TILEXR_MOONEP_PLAN_METADATA_V2_ABI_VERSION;
+    metadata.dst = plan.dst;
+    metadata.dstCount = static_cast<uint64_t>(plan.s * plan.k);
+    metadata.cuSeqlens = plan.cuSeqlens;
+    metadata.cuSeqlensCount = static_cast<uint64_t>(plan.e + plan.b);
+    metadata.remoteExperts = reinterpret_cast<int32_t *>(0x9000);
+    metadata.remoteExpertsCount = static_cast<uint64_t>(plan.r * plan.b);
+    metadata.expertTargets = reinterpret_cast<uint64_t *>(0xA000);
+    metadata.expertTargetsCount = static_cast<uint64_t>((plan.e / plan.r) * ((plan.r + 63) / 64));
+    metadata.remoteStats = plan.remoteStats;
+    metadata.remoteStatsCount = 2;
+    metadata.status = plan.status;
+    metadata.statusCount = TileXREp::Plan::kPlanStatusWords;
+    metadata.dupGroups = plan.dupGroups;
+    metadata.dupGroupsCount = static_cast<uint64_t>(config.nvS * 3);
+    metadata.dupLoffs = plan.dupLoffs;
+    metadata.dupLoffsCount = static_cast<uint64_t>(config.nvS);
+    metadata.dupCounts = plan.dupCounts;
+    metadata.dupCountsCount = 2;
+    metadata.s = plan.s;
+    metadata.k = plan.k;
+    metadata.r = plan.r;
+    metadata.e = plan.e;
+    metadata.b = plan.b;
+    metadata.nvS = plan.nvS;
+    metadata.epoch = plan.epoch;
+    return metadata;
 }
 
 struct Fixture {
@@ -276,6 +315,24 @@ void TestPointersAlignmentWorkspaceAndWaitBudget()
     fixture.Reset();
     fixture.plan.dst = reinterpret_cast<int32_t *>(0x1002);
     CheckInt("misaligned output", Validate(fixture), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+
+    fixture.Reset();
+    fixture.arguments.remoteExperts = reinterpret_cast<int32_t *>(0x9000);
+    CheckInt("unpaired remoteExperts", Validate(fixture), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+
+    fixture.Reset();
+    fixture.arguments.expertTargets = reinterpret_cast<uint64_t *>(0xA000);
+    CheckInt("unpaired expertTargets", Validate(fixture), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+
+    fixture.Reset();
+    fixture.arguments.remoteExperts = reinterpret_cast<int32_t *>(0x9002);
+    fixture.arguments.expertTargets = reinterpret_cast<uint64_t *>(0xA000);
+    CheckInt("misaligned remoteExperts", Validate(fixture), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+
+    fixture.Reset();
+    fixture.arguments.remoteExperts = reinterpret_cast<int32_t *>(0x9000);
+    fixture.arguments.expertTargets = reinterpret_cast<uint64_t *>(0xA004);
+    CheckInt("misaligned expertTargets", Validate(fixture), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
 
     fixture.Reset();
     fixture.arguments.localWorkspace = reinterpret_cast<void *>(0x200020);
@@ -416,6 +473,10 @@ void TestLaunchPlanKernel()
         "launch forwards cuSeqlens");
     Check(g_launchCapture.expertsToCopy == reinterpret_cast<GM_ADDR>(fixture.plan.expertsToCopy),
         "launch forwards expertsToCopy");
+    Check(g_launchCapture.remoteExperts == reinterpret_cast<GM_ADDR>(fixture.arguments.remoteExperts),
+        "launch forwards remoteExperts");
+    Check(g_launchCapture.expertTargets == reinterpret_cast<GM_ADDR>(fixture.arguments.expertTargets),
+        "launch forwards expertTargets");
     Check(g_launchCapture.remoteStats == reinterpret_cast<GM_ADDR>(fixture.plan.remoteStats),
         "launch forwards remoteStats");
     Check(g_launchCapture.status == reinterpret_cast<GM_ADDR>(fixture.plan.status),
@@ -473,6 +534,134 @@ void TestPublicPlanLaunch()
         fixture.arguments.registeredMetaWorkspace, fixture.arguments.registeredMetaBytes,
         fixture.arguments.stream), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
     Check(g_launchCapture.calls == 0, "invalid public arguments prevent launch");
+
+    alignas(TileXRMoonEPPlanConfig) unsigned char configStorage[sizeof(TileXRMoonEPPlanConfig) + 1] = {};
+    const TileXRMoonEPPlanConfig *misalignedConfig =
+        reinterpret_cast<const TileXRMoonEPPlanConfig *>(configStorage + 1);
+    g_launchCapture = PlanLaunchCapture {};
+    CheckInt("misaligned public config is rejected", TileXRMoeEpPlanV2(
+        fixture.arguments.topkExperts, fixture.arguments.tokensPerExpert,
+        fixture.arguments.globalRankIds, comm, fixture.arguments.s, fixture.arguments.topK,
+        fixture.arguments.expertNum, misalignedConfig, &fixture.plan,
+        fixture.arguments.localWorkspace, fixture.arguments.localWorkspaceBytes,
+        fixture.arguments.registeredMetaWorkspace, fixture.arguments.registeredMetaBytes,
+        fixture.arguments.stream), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+    Check(g_launchCapture.calls == 0, "misaligned public config prevents launch");
+
+    alignas(TileXRMoonEPPlanDesc) unsigned char planStorage[sizeof(TileXRMoonEPPlanDesc) + 1] = {};
+    TileXRMoonEPPlanDesc *misalignedPlan = reinterpret_cast<TileXRMoonEPPlanDesc *>(planStorage + 1);
+    g_launchCapture = PlanLaunchCapture {};
+    CheckInt("misaligned public plan is rejected", TileXRMoeEpPlanV2(
+        fixture.arguments.topkExperts, fixture.arguments.tokensPerExpert,
+        fixture.arguments.globalRankIds, comm, fixture.arguments.s, fixture.arguments.topK,
+        fixture.arguments.expertNum, &fixture.config, misalignedPlan,
+        fixture.arguments.localWorkspace, fixture.arguments.localWorkspaceBytes,
+        fixture.arguments.registeredMetaWorkspace, fixture.arguments.registeredMetaBytes,
+        fixture.arguments.stream), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+    Check(g_launchCapture.calls == 0, "misaligned public plan prevents launch");
+}
+
+void TestPublicMetadataPlanLaunch()
+{
+    Fixture fixture;
+    InstallRuntimeGetters(fixture);
+    const TileXRCommPtr comm = reinterpret_cast<TileXRCommPtr>(0x600000);
+    TileXRMoonEPPlanMetadataV2 metadata = ValidMetadata(fixture.config, fixture.plan);
+
+    g_launchCapture = PlanLaunchCapture {};
+    CheckInt("valid metadata plan launches", TileXRMoeEpPlanV2WithMetadata(
+        fixture.arguments.topkExperts, fixture.arguments.tokensPerExpert,
+        fixture.arguments.globalRankIds, comm, fixture.arguments.s, fixture.arguments.topK,
+        fixture.arguments.expertNum, &fixture.config, &metadata, fixture.arguments.localWorkspace,
+        fixture.arguments.localWorkspaceBytes, fixture.arguments.registeredMetaWorkspace,
+        fixture.arguments.registeredMetaBytes, fixture.arguments.stream), TileXR::TILEXR_SUCCESS);
+    Check(g_launchCapture.calls == 1, "metadata plan launches once");
+    Check(g_launchCapture.remoteExperts == reinterpret_cast<GM_ADDR>(metadata.remoteExperts),
+        "metadata API forwards remoteExperts");
+    Check(g_launchCapture.expertTargets == reinterpret_cast<GM_ADDR>(metadata.expertTargets),
+        "metadata API forwards expertTargets");
+
+    alignas(TileXRMoonEPPlanMetadataV2) unsigned char metadataStorage[sizeof(TileXRMoonEPPlanMetadataV2) + 1] = {};
+    TileXRMoonEPPlanMetadataV2 *misalignedMetadata =
+        reinterpret_cast<TileXRMoonEPPlanMetadataV2 *>(metadataStorage + 1);
+    g_launchCapture = PlanLaunchCapture {};
+    CheckInt("misaligned metadata descriptor is rejected", TileXRMoeEpPlanV2WithMetadata(
+        fixture.arguments.topkExperts, fixture.arguments.tokensPerExpert,
+        fixture.arguments.globalRankIds, comm, fixture.arguments.s, fixture.arguments.topK,
+        fixture.arguments.expertNum, &fixture.config, misalignedMetadata,
+        fixture.arguments.localWorkspace, fixture.arguments.localWorkspaceBytes,
+        fixture.arguments.registeredMetaWorkspace, fixture.arguments.registeredMetaBytes,
+        fixture.arguments.stream), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+    Check(g_launchCapture.calls == 0, "misaligned metadata descriptor prevents launch");
+
+    auto ExpectRejected = [&](const char *name, const TileXRMoonEPPlanMetadataV2 &invalid,
+                              int64_t callS = -1, int64_t callTopK = -1) {
+        TileXRMoonEPPlanMetadataV2 copy = invalid;
+        g_launchCapture = PlanLaunchCapture {};
+        const int64_t actualS = callS < 0 ? fixture.arguments.s : callS;
+        const int64_t actualTopK = callTopK < 0 ? fixture.arguments.topK : callTopK;
+        CheckInt(name, TileXRMoeEpPlanV2WithMetadata(
+            fixture.arguments.topkExperts, fixture.arguments.tokensPerExpert,
+            fixture.arguments.globalRankIds, comm, actualS, actualTopK, fixture.arguments.expertNum,
+            &fixture.config, &copy, fixture.arguments.localWorkspace,
+            fixture.arguments.localWorkspaceBytes, fixture.arguments.registeredMetaWorkspace,
+            fixture.arguments.registeredMetaBytes, fixture.arguments.stream),
+            TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
+        Check(g_launchCapture.calls == 0, "invalid metadata prevents launch");
+    };
+
+    TileXRMoonEPPlanMetadataV2 invalid = metadata;
+    invalid.structSize = sizeof(invalid) - 1;
+    ExpectRejected("metadata struct size", invalid);
+    invalid = metadata;
+    ++invalid.abiVersion;
+    ExpectRejected("metadata ABI version", invalid);
+    struct MetadataCountCase {
+        const char *name;
+        uint64_t TileXRMoonEPPlanMetadataV2::*member;
+    };
+    const MetadataCountCase countCases[] = {
+        {"metadata dst count", &TileXRMoonEPPlanMetadataV2::dstCount},
+        {"metadata cuSeqlens count", &TileXRMoonEPPlanMetadataV2::cuSeqlensCount},
+        {"metadata remoteExperts count", &TileXRMoonEPPlanMetadataV2::remoteExpertsCount},
+        {"metadata expertTargets count", &TileXRMoonEPPlanMetadataV2::expertTargetsCount},
+        {"metadata remoteStats count", &TileXRMoonEPPlanMetadataV2::remoteStatsCount},
+        {"metadata status count", &TileXRMoonEPPlanMetadataV2::statusCount},
+        {"metadata dupGroups count", &TileXRMoonEPPlanMetadataV2::dupGroupsCount},
+        {"metadata dupLoffs count", &TileXRMoonEPPlanMetadataV2::dupLoffsCount},
+        {"metadata dupCounts count", &TileXRMoonEPPlanMetadataV2::dupCountsCount},
+    };
+    for (const MetadataCountCase &countCase : countCases) {
+        invalid = metadata;
+        --(invalid.*(countCase.member));
+        ExpectRejected(countCase.name, invalid);
+    }
+    invalid = metadata;
+    invalid.remoteExperts = nullptr;
+    ExpectRejected("metadata remoteExperts pointer", invalid);
+    invalid = metadata;
+    invalid.expertTargets = nullptr;
+    ExpectRejected("metadata expertTargets pointer", invalid);
+    invalid = metadata;
+    invalid.r = fixture.commArgs.rankSize / 2;
+    invalid.remoteExpertsCount = static_cast<uint64_t>(invalid.r * invalid.b);
+    invalid.expertTargetsCount = static_cast<uint64_t>((invalid.e / invalid.r) * ((invalid.r + 63) / 64));
+    ExpectRejected("metadata communicator rank count", invalid);
+    invalid = metadata;
+    invalid.dstCount = UINT64_MAX;
+    invalid.s = INT64_MAX;
+    ExpectRejected("metadata dst count overflow", invalid, INT64_MAX, 2);
+
+    g_launchCapture = PlanLaunchCapture {};
+    CheckInt("legacy API remains valid", TileXRMoeEpPlanV2(
+        fixture.arguments.topkExperts, fixture.arguments.tokensPerExpert,
+        fixture.arguments.globalRankIds, comm, fixture.arguments.s, fixture.arguments.topK,
+        fixture.arguments.expertNum, &fixture.config, &fixture.plan,
+        fixture.arguments.localWorkspace, fixture.arguments.localWorkspaceBytes,
+        fixture.arguments.registeredMetaWorkspace, fixture.arguments.registeredMetaBytes,
+        fixture.arguments.stream), TileXR::TILEXR_SUCCESS);
+    Check(g_launchCapture.remoteExperts == nullptr && g_launchCapture.expertTargets == nullptr,
+        "legacy API keeps metadata outputs disabled");
 }
 } // namespace
 
@@ -486,5 +675,6 @@ int main()
     TestPrepareLaunchContext();
     TestLaunchPlanKernel();
     TestPublicPlanLaunch();
+    TestPublicMetadataPlanLaunch();
     return g_failures == 0 ? 0 : 1;
 }

@@ -485,6 +485,22 @@ void TestInvariantCheckerRejectsLayoutSemanticCorruption()
     Check(invariantError == "expertsToCopy content mismatch",
         "expertsToCopy content violation must have a precise invariant diagnostic");
 
+    ReferenceOutput wrongExpertTargetsShape = migrated;
+    wrongExpertTargetsShape.expertTargets.pop_back();
+    Check(!TileXREp::Plan::CheckReferencePlanInvariants(
+        migrationInput, wrongExpertTargetsShape, &invariantError),
+        "invariant checker must reject expertTargets shape corruption");
+    Check(invariantError == "expertTargets shape mismatch",
+        "expertTargets shape violation must have a precise invariant diagnostic");
+
+    ReferenceOutput wrongExpertTargets = migrated;
+    wrongExpertTargets.expertTargets[0] ^= 1ULL;
+    Check(!TileXREp::Plan::CheckReferencePlanInvariants(
+        migrationInput, wrongExpertTargets, &invariantError),
+        "invariant checker must reject expertTargets bitmap corruption");
+    Check(invariantError == "expertTargets content mismatch",
+        "expertTargets content violation must have a precise invariant diagnostic");
+
     ReferenceOutput wrongRemoteStats = migrated;
     ++wrongRemoteStats.remoteStats[0];
     Check(!TileXREp::Plan::CheckReferencePlanInvariants(

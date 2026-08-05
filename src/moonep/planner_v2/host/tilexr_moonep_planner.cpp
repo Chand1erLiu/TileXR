@@ -1,6 +1,8 @@
 #include "tilexr_ep_plan.h"
 #include "tilexr_moonep_planner.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <vector>
 
@@ -55,15 +57,72 @@ namespace {
 
 constexpr uint64_t kDefaultPlanWaitIterations = 1ULL << 24;
 
+bool IsHostPointerAligned(const void *pointer, size_t alignment)
+{
+    return pointer != nullptr &&
+        reinterpret_cast<uintptr_t>(pointer) % static_cast<uintptr_t>(alignment) == 0;
+}
+
+struct MetadataElementCounts {
+    uint64_t dst = 0;
+    uint64_t cuSeqlens = 0;
+    uint64_t remoteExperts = 0;
+    uint64_t expertTargets = 0;
+    uint64_t dupGroups = 0;
+    uint64_t dupLoffs = 0;
+};
+
+bool CheckedAdd(uint64_t lhs, uint64_t rhs, uint64_t *out)
+{
+    if (out == nullptr || rhs > std::numeric_limits<uint64_t>::max() - lhs) return false;
+    *out = lhs + rhs;
+    return true;
+}
+
+bool CheckedMul(uint64_t lhs, uint64_t rhs, uint64_t *out)
+{
+    if (out == nullptr || (lhs != 0 && rhs > std::numeric_limits<uint64_t>::max() / lhs)) return false;
+    *out = lhs * rhs;
+    return true;
+}
+
+bool BuildMetadataElementCounts(int64_t s, int64_t topK, int64_t expertNum,
+    int64_t rankSize, const TileXRMoonEPPlanConfig &config, MetadataElementCounts *counts)
+{
+    if (counts == nullptr || s <= 0 || topK <= 0 || expertNum <= 0 || rankSize <= 0 ||
+        expertNum % rankSize != 0 || config.prefetchSlots <= 0 || config.nvS <= 0) {
+        return false;
+    }
+    const uint64_t us = static_cast<uint64_t>(s);
+    const uint64_t uk = static_cast<uint64_t>(topK);
+    const uint64_t ue = static_cast<uint64_t>(expertNum);
+    const uint64_t ur = static_cast<uint64_t>(rankSize);
+    const uint64_t ub = static_cast<uint64_t>(config.prefetchSlots);
+    const uint64_t unvS = static_cast<uint64_t>(config.nvS);
+    const uint64_t targetWords = ((ur - 1) / 64) + 1;
+    MetadataElementCounts result {};
+    if (!CheckedMul(us, uk, &result.dst) ||
+        !CheckedAdd(ue, ub, &result.cuSeqlens) ||
+        !CheckedMul(ur, ub, &result.remoteExperts) ||
+        !CheckedMul(ue / ur, targetWords, &result.expertTargets) ||
+        !CheckedMul(unvS, 3, &result.dupGroups)) {
+        return false;
+    }
+    result.dupLoffs = unvS;
+    *counts = result;
+    return true;
+}
+
 int RunOptimizedPlan(const int32_t *topkExperts, const int32_t *tokensPerExpert,
     const int32_t *globalRankIds, TileXRCommPtr comm, int64_t s, int64_t topK, int64_t expertNum,
-    const TileXRMoonEPPlanConfig *config, TileXRMoonEPPlanDesc *plan, void *localWorkspace,
+    const TileXRMoonEPPlanConfig *config, TileXRMoonEPPlanDesc *plan,
+    int32_t *remoteExperts, uint64_t *expertTargets, void *localWorkspace,
     uint64_t localWorkspaceBytes, void *metaWorkspace, uint64_t metaBytes,
     uint64_t waitIterations, aclrtStream stream)
 {
     const TileXREp::Plan::PlanHostArguments arguments {
         topkExperts, tokensPerExpert, globalRankIds, s, topK, expertNum, config, plan,
-        localWorkspace, localWorkspaceBytes, metaWorkspace, metaBytes, waitIterations, stream,
+        remoteExperts, expertTargets, localWorkspace, localWorkspaceBytes, metaWorkspace, metaBytes, waitIterations, stream,
     };
     TileXREp::Plan::PlanHostContext context {};
     const int ret = TileXREp::Plan::PreparePlanLaunchContext(comm, arguments, &context);
@@ -79,9 +138,59 @@ int TileXRMoeEpPlanV2(const int32_t *topkExperts, const int32_t *tokensPerExpert
     uint64_t localWorkspaceBytes, void *registeredMetaWorkspace, uint64_t registeredMetaBytes,
     aclrtStream stream)
 {
+    if (!IsHostPointerAligned(config, alignof(TileXRMoonEPPlanConfig)) ||
+        !IsHostPointerAligned(plan, alignof(TileXRMoonEPPlanDesc))) {
+        return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
+    }
     return RunOptimizedPlan(topkExperts, tokensPerExpert, globalRankIds, comm, s, topK, expertNum,
-        config, plan, localWorkspace, localWorkspaceBytes, registeredMetaWorkspace,
+        config, plan, nullptr, nullptr, localWorkspace, localWorkspaceBytes, registeredMetaWorkspace,
         registeredMetaBytes, kDefaultPlanWaitIterations, stream);
+}
+
+int TileXRMoeEpPlanV2WithMetadata(const int32_t *topkExperts, const int32_t *tokensPerExpert,
+    const int32_t *globalRankIds, TileXRCommPtr comm, int64_t s, int64_t topK, int64_t expertNum,
+    const TileXRMoonEPPlanConfig *config, TileXRMoonEPPlanMetadataV2 *metadata,
+    void *localWorkspace, uint64_t localWorkspaceBytes, void *registeredMetaWorkspace,
+    uint64_t registeredMetaBytes, aclrtStream stream)
+{
+    if (!IsHostPointerAligned(config, alignof(TileXRMoonEPPlanConfig)) ||
+        !IsHostPointerAligned(metadata, alignof(TileXRMoonEPPlanMetadataV2)) ||
+        metadata->structSize != sizeof(*metadata) ||
+        metadata->abiVersion != TILEXR_MOONEP_PLAN_METADATA_V2_ABI_VERSION ||
+        metadata->s != s || metadata->k != topK || metadata->e != expertNum ||
+        metadata->b != config->prefetchSlots || metadata->nvS != config->nvS ||
+        metadata->epoch == 0) {
+        return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
+    }
+    MetadataElementCounts counts {};
+    if (!BuildMetadataElementCounts(s, topK, expertNum, metadata->r, *config, &counts) ||
+        metadata->dst == nullptr || metadata->dstCount != counts.dst ||
+        metadata->cuSeqlens == nullptr || metadata->cuSeqlensCount != counts.cuSeqlens ||
+        metadata->remoteExperts == nullptr || metadata->remoteExpertsCount != counts.remoteExperts ||
+        metadata->expertTargets == nullptr || metadata->expertTargetsCount != counts.expertTargets ||
+        metadata->remoteStats == nullptr || metadata->remoteStatsCount != 2 ||
+        metadata->status == nullptr || metadata->statusCount != TileXREp::Plan::kPlanStatusWords ||
+        metadata->dupGroups == nullptr || metadata->dupGroupsCount != counts.dupGroups ||
+        metadata->dupLoffs == nullptr || metadata->dupLoffsCount != counts.dupLoffs ||
+        metadata->dupCounts == nullptr || metadata->dupCountsCount != 2) {
+        return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
+    }
+    TileXRMoonEPPlanDesc plan {};
+    plan.dst = metadata->dst;
+    plan.cuSeqlens = metadata->cuSeqlens;
+    plan.expertsToCopy = metadata->remoteExperts;
+    plan.remoteStats = metadata->remoteStats;
+    plan.dupGroups = metadata->dupGroups;
+    plan.dupLoffs = metadata->dupLoffs;
+    plan.dupCounts = metadata->dupCounts;
+    plan.status = metadata->status;
+    plan.s = s; plan.k = topK; plan.r = metadata->r; plan.e = expertNum;
+    plan.b = config->prefetchSlots; plan.cap = config->rankTokenCapacity;
+    plan.nvS = config->nvS; plan.tokenPadding = config->tokenPadding; plan.epoch = metadata->epoch;
+    return RunOptimizedPlan(topkExperts, tokensPerExpert, globalRankIds, comm, s, topK, expertNum,
+        config, &plan, metadata->remoteExperts, metadata->expertTargets, localWorkspace,
+        localWorkspaceBytes, registeredMetaWorkspace, registeredMetaBytes,
+        kDefaultPlanWaitIterations, stream);
 }
 
 namespace {
@@ -204,7 +313,8 @@ int GetCompatCommArgs(TileXRCommPtr comm, TileXR::CommArgs **args)
 int TileXRMoonEpPlannerGetWorkspaceSizeV2(TileXRCommPtr comm, int64_t s, int64_t k,
     int64_t expertCount, uint64_t *workspaceBytes, int64_t *dispatchedCapacity)
 {
-    if (workspaceBytes == nullptr || dispatchedCapacity == nullptr) {
+    if (!IsHostPointerAligned(workspaceBytes, alignof(uint64_t)) ||
+        !IsHostPointerAligned(dispatchedCapacity, alignof(int64_t))) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
     *workspaceBytes = 0;
@@ -281,7 +391,7 @@ int TileXRMoonEpPlannerV2(const int32_t *topkExpertIds, const int32_t *tokensPer
     plan.epoch = static_cast<uint64_t>(epochMagic);
 
     ret = RunOptimizedPlan(topkExpertIds, tokensPerExpert, rankIdsDev, comm, s, k,
-        expertCount, &config, &plan, base + layout.localWorkspaceOffset,
+        expertCount, &config, &plan, nullptr, nullptr, base + layout.localWorkspaceOffset,
         layout.optimized.local.totalBytes, registeredMeta, layout.optimized.registeredMeta.totalBytes,
         waitIterations, stream);
     if (ret != TileXR::TILEXR_SUCCESS) return ret;

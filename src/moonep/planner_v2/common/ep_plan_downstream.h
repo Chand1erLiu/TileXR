@@ -8,14 +8,6 @@
 namespace TileXREp {
 namespace Plan {
 
-struct MoonEPRouteTarget {
-    int32_t rawDst;
-    int32_t dstRank;
-    int32_t recvSlot;
-    int32_t sendHidden;
-    int32_t writeRouteWeight;
-};
-
 struct MoonEPReceivedRoute {
     int32_t srcRank;
     int32_t tokenId;
@@ -24,8 +16,9 @@ struct MoonEPReceivedRoute {
     int32_t isPrimary;
 };
 
-TileXRMoonEPPlanStatus DecodeMoonEPDst(
-    int32_t encoded, int64_t nvS, int64_t rankSize, MoonEPRouteTarget *target);
+TileXRMoonEPPlanStatus BuildMoonEPExpertTargets(const int32_t *remoteExperts,
+    int64_t rankSize, int64_t expertNum, int64_t prefetchSlots, int32_t ownerRank,
+    uint64_t *expertTargets, uint64_t expertTargetsCount);
 
 TileXRMoonEPPlanStatus BuildMoonEPDuplicateMetadata(const MoonEPReceivedRoute *records,
     int64_t recordCount, int64_t rankSize, int64_t s, int64_t topK, int64_t nvS,
