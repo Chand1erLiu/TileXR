@@ -96,6 +96,8 @@ typedef enum aclrtMemcpyKind {
     ACL_MEMCPY_DEVICE_TO_DEVICE = 3
 } aclrtMemcpyKind;
 aclError aclrtStreamWaitEvent(aclrtStream stream, aclrtEvent event);
+aclError aclrtMemcpy(void *dst, size_t destMax, const void *src,
+    size_t count, aclrtMemcpyKind kind);
 aclError aclrtMemcpyAsync(void *dst, size_t destMax, const void *src,
     size_t count, aclrtMemcpyKind kind, aclrtStream stream);
 #ifdef __cplusplus

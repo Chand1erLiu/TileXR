@@ -304,6 +304,9 @@ int GetCompatCommArgs(TileXRCommPtr comm, TileXR::CommArgs **args)
     if (ret != TileXR::TILEXR_SUCCESS) return ret;
     if (*args == nullptr || (*args)->rankSize <= 0 || (*args)->rank < 0 ||
         (*args)->rank >= (*args)->rankSize) return TileXR::TILEXR_ERROR_NOT_INITIALIZED;
+    if (((*args)->extraFlag & TileXR::ExtraFlag::TOPO_910A5) == 0) {
+        return TileXR::TILEXR_ERROR_NOT_SUPPORT;
+    }
     return TileXR::TILEXR_SUCCESS;
 }
 
@@ -356,15 +359,7 @@ int TileXRMoonEpPlannerV2(const int32_t *topkExpertIds, const int32_t *tokensPer
     if (args->localRankSize <= 0 || args->rankSize % args->localRankSize != 0) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
-    std::vector<int32_t> rankIds(static_cast<size_t>(args->rankSize));
-    for (int32_t rank = 0; rank < args->rankSize; ++rank) {
-        rankIds[rank] = (rank / args->localRankSize) * TileXREp::Plan::kPlanCardsPerServer +
-            (rank % args->localRankSize);
-    }
     int32_t *rankIdsDev = reinterpret_cast<int32_t *>(base + layout.globalRankIdsOffset);
-    if (aclrtMemcpyAsync(rankIdsDev, static_cast<size_t>(args->rankSize) * sizeof(int32_t),
-            rankIds.data(), static_cast<size_t>(args->rankSize) * sizeof(int32_t),
-            ACL_MEMCPY_HOST_TO_DEVICE, stream) != 0) return TileXR::TILEXR_ERROR_MKIRT;
 
     int64_t epochMagic = 0;
     ret = TileXRCommNextMagic(comm, &epochMagic);
@@ -390,10 +385,25 @@ int TileXRMoonEpPlannerV2(const int32_t *topkExpertIds, const int32_t *tokensPer
     plan.tokenPadding = config.tokenPadding;
     plan.epoch = static_cast<uint64_t>(epochMagic);
 
-    ret = RunOptimizedPlan(topkExpertIds, tokensPerExpert, rankIdsDev, comm, s, k,
-        expertCount, &config, &plan, nullptr, nullptr, base + layout.localWorkspaceOffset,
-        layout.optimized.local.totalBytes, registeredMeta, layout.optimized.registeredMeta.totalBytes,
-        waitIterations, stream);
+    const TileXREp::Plan::PlanHostArguments arguments {
+        topkExpertIds, tokensPerExpert, rankIdsDev, s, k, expertCount, &config, &plan,
+        nullptr, nullptr, base + layout.localWorkspaceOffset, layout.optimized.local.totalBytes,
+        registeredMeta, layout.optimized.registeredMeta.totalBytes, waitIterations, stream,
+    };
+    TileXREp::Plan::PlanHostContext context {};
+    ret = TileXREp::Plan::PreparePlanLaunchContext(comm, arguments, &context);
+    if (ret != TileXR::TILEXR_SUCCESS) return ret;
+
+    std::vector<int32_t> rankIds(static_cast<size_t>(args->rankSize));
+    for (int32_t rank = 0; rank < args->rankSize; ++rank) {
+        rankIds[rank] = (rank / args->localRankSize) * TileXREp::Plan::kPlanCardsPerServer +
+            (rank % args->localRankSize);
+    }
+    if (aclrtMemcpy(rankIdsDev, static_cast<size_t>(args->rankSize) * sizeof(int32_t),
+            rankIds.data(), static_cast<size_t>(args->rankSize) * sizeof(int32_t),
+            ACL_MEMCPY_HOST_TO_DEVICE) != 0) return TileXR::TILEXR_ERROR_MKIRT;
+
+    ret = TileXREp::Plan::LaunchPlanKernel(comm, arguments, context);
     if (ret != TileXR::TILEXR_SUCCESS) return ret;
 
     const TileXREp::Plan::PlanRegion &remoteSet = layout.optimized.local.remoteExpertSet;

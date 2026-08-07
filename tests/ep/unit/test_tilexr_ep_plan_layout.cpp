@@ -216,22 +216,47 @@ void TestPeerMailboxLayout()
             TileXREp::Plan::BuildPlanPeerMailboxLayout(rankSize, 16);
         Check(layout.rowBytes % TileXREp::Plan::kPlanPeerMailboxTransferBytes == 0,
             "peer mailbox row must be 512-byte aligned");
+        Check(layout.rowBytes == TileXREp::Plan::kPlanPeerMailboxRowBytes,
+            "peer mailbox row stride must be configuration-independent");
+        Check(layout.inputBytes <= layout.rowBytes &&
+                layout.inputBytes % TileXREp::Plan::kPlanPeerMailboxTransferBytes == 0,
+            "peer mailbox input transfer must fit and remain 512-byte aligned");
         Check(layout.totalBytes == static_cast<uint64_t>(rankSize) * layout.rowBytes,
             "peer mailbox total bytes must contain one row per source rank");
-        Check(layout.header + TileXREp::Plan::kPlanHeaderStrideBytes <= layout.tpe,
-            "peer mailbox header and TPE must not overlap");
-        Check(layout.tpe + 16 * sizeof(int32_t) <= layout.globalRankId,
-            "peer mailbox TPE and global rank id must not overlap");
+        Check(layout.header + TileXREp::Plan::kPlanHeaderStrideBytes <= layout.globalRankId,
+            "peer mailbox header and global rank id must not overlap");
         Check(layout.globalRankId + sizeof(int32_t) <= layout.status,
             "peer mailbox global rank id and status must not overlap");
-        Check(layout.status + TileXREp::Plan::kPlanStatusStrideBytes <= layout.rowBytes,
-            "peer mailbox status must fit in its source row");
+        Check(layout.status + TileXREp::Plan::kPlanStatusStrideBytes <= layout.tpe,
+            "peer mailbox status and TPE must not overlap");
+        Check(layout.tpe + 16 * sizeof(int32_t) <= layout.inputBytes,
+            "peer mailbox TPE must fit in the input transfer");
         for (int64_t sourceRank = 1; sourceRank < rankSize; ++sourceRank) {
             Check(TileXREp::Plan::PlanPeerMailboxRowOffset(layout, sourceRank) >=
                     TileXREp::Plan::PlanPeerMailboxRowOffset(layout, sourceRank - 1) + layout.rowBytes,
                 "peer mailbox source rows must not overlap");
         }
     }
+    const TileXREp::Plan::PlanPeerMailboxLayout maximum =
+        TileXREp::Plan::BuildPlanPeerMailboxLayout(TileXR::TILEXR_MAX_RANK_SIZE, 16);
+    Check(maximum.totalBytes == static_cast<uint64_t>(TileXR::IPC_BUFF_MAX_SIZE),
+        "maximum-rank peer mailbox must exactly fit the IPC data window");
+
+    const int64_t expertCapacity = static_cast<int64_t>(
+        (maximum.rowBytes - maximum.tpe) / sizeof(int32_t));
+    const TileXREp::Plan::PlanPeerMailboxLayout oversized =
+        TileXREp::Plan::BuildPlanPeerMailboxLayout(8, expertCapacity + 1);
+    Check(oversized.inputBytes > oversized.rowBytes,
+        "oversized peer mailbox input must be rejected by validation");
+
+    const TileXREp::Plan::PlanPeerMailboxLayout differentExpertNum =
+        TileXREp::Plan::BuildPlanPeerMailboxLayout(8, 32);
+    Check(differentExpertNum.header == maximum.header &&
+            differentExpertNum.globalRankId == maximum.globalRankId &&
+            differentExpertNum.status == maximum.status &&
+            differentExpertNum.tpe == maximum.tpe &&
+            differentExpertNum.rowBytes == maximum.rowBytes,
+        "peer mailbox addresses must not depend on expertNum");
 }
 
 void TestWorkspaceByteValidation()

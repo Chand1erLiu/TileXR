@@ -31,13 +31,14 @@ constexpr uint64_t kFnvPrime = 1099511628211ULL;
 constexpr int32_t kPhaseData = 1;
 constexpr int32_t kPhaseStatus = 2;
 constexpr int32_t kPhaseReady = 3;
+constexpr int32_t kPhaseConsensus = 4;
 constexpr uint64_t kBarrierSpinLimit = 1ULL << 24;
 constexpr uint64_t kCacheLineBytes = 64;
 constexpr uint64_t kPlannerBarrierStrideBytes = 512;
 constexpr uint32_t kPlannerBarrierWords = kPlannerBarrierStrideBytes / sizeof(uint64_t);
 constexpr uint64_t kPlannerBarrierBaseBytes =
     static_cast<uint64_t>(TileXRMoonEp::kPlannerReadyEventId) * SYNC_UNIT_SIZE;
-constexpr uint64_t kPlannerBarrierPhaseCount = 3;
+constexpr uint64_t kPlannerBarrierPhaseCount = 4;
 constexpr int32_t kBarrierDebugBuildTag = 0x5A17C0DE;
 
 static_assert(kPlannerBarrierBaseBytes +
@@ -396,14 +397,14 @@ __aicore__ inline void PushPeerMailboxRowMte(GM_ADDR remoteRow, GM_ADDR localRow
 
 __aicore__ inline void PushPeerMailboxToTargets(GM_ADDR *peerMems, int64_t sourceRank,
     int64_t rankSize, const PlanPeerMailboxLayout &layout,
-    AscendC::LocalTensor<uint8_t> relay)
+    uint64_t bytes, AscendC::LocalTensor<uint8_t> relay)
 {
     GM_ADDR localRow = PeerMailboxRow(peerMems[sourceRank], layout, sourceRank);
-    RefreshCacheLines(localRow, layout.rowBytes);
+    RefreshCacheLines(localRow, bytes);
     for (int64_t offset = 1; offset < rankSize; ++offset) {
         const int64_t targetRank = (sourceRank + offset) % rankSize;
         GM_ADDR remoteRow = PeerMailboxRow(peerMems[targetRank], layout, sourceRank);
-        PushPeerMailboxRowMte(remoteRow, localRow, layout.rowBytes, relay);
+        PushPeerMailboxRowMte(remoteRow, localRow, bytes, relay);
     }
 }
 
@@ -426,8 +427,8 @@ __aicore__ inline void PublishInputs(GM_ADDR *peerMems,
         publishedTpe[expert] = tokensPerExpert[expert];
     }
     *reinterpret_cast<__gm__ int32_t *>(row + layout.globalRankId) = globalRankIds[rank];
-    RefreshCacheLines(row, layout.rowBytes);
-    PushPeerMailboxToTargets(peerMems, rank, rankSize, layout, relay);
+    RefreshCacheLines(row, layout.inputBytes);
+    PushPeerMailboxToTargets(peerMems, rank, rankSize, layout, layout.inputBytes, relay);
 }
 
 __aicore__ inline void GatherInputs(GM_ADDR localOwnerPeerMem,
@@ -455,7 +456,8 @@ __aicore__ inline void PublishStatus(GM_ADDR *peerMems,
     GM_ADDR row = PeerMailboxRow(peerMems[rank], layout, rank);
     CopyWords(reinterpret_cast<__gm__ int32_t *>(row + layout.status),
         status, TileXREp::Plan::kPlanStatusWords);
-    PushPeerMailboxToTargets(peerMems, rank, rankSize, layout, relay);
+    PushPeerMailboxToTargets(peerMems, rank, rankSize, layout,
+        TileXREp::Plan::kPlanPeerMailboxTransferBytes, relay);
 }
 
 __aicore__ inline void GatherStatuses(GM_ADDR localOwnerPeerMem,
@@ -666,6 +668,24 @@ extern "C" __global__ __aicore__ void tilexr_ep_plan_kernel(GM_ADDR commArgsGM,
             WriteBarrierDebugStatus(status,
                 TileXRMoonEp::kPlannerStatusTimeoutBase + timedOutPeer, readyBarrierDebug);
         }
+    }
+
+    // Re-publish the ready outcome before reducing one final time. A rank that
+    // timed out in the ready phase therefore prevents peers from committing a
+    // success epoch based only on its earlier ready flag.
+    ReloadPeerMems(commArgsGM, peerMems, static_cast<int32_t>(rankSize));
+    PublishStatus(peerMems, peerMailbox, rank, rankSize, status, barrierRelay);
+    timedOutPeer = -1;
+    BarrierDebug consensusBarrierDebug {};
+    if (CollectiveBarrier(peerMems, static_cast<int32_t>(rank),
+            static_cast<int32_t>(rankSize), static_cast<int32_t>(magic), kPhaseConsensus,
+            waitIterations, barrierRelay, &timedOutPeer, &consensusBarrierDebug)) {
+        GatherStatuses(peerMems[rank], peerMailbox, metaWorkspaceGM, metaOffsets, rankSize);
+        status[0] = ReduceGlobalPlanStatus(metaWorkspaceGM, metaOffsets, rankSize);
+        RefreshCacheLines(statusGM, sizeof(int32_t));
+    } else if (status[1] != kBarrierDebugBuildTag) {
+        WriteBarrierDebugStatus(status,
+            TileXRMoonEp::kPlannerStatusTimeoutBase + timedOutPeer, consensusBarrierDebug);
     }
     if (status[0] == PLAN_OK) {
         epochState->requestedEpoch = epoch;

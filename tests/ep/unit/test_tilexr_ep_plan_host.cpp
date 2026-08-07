@@ -7,6 +7,7 @@
 #include "runtime/kernel.h"
 
 #include "ep_plan_host.h"
+#include "ep_plan_peer_mailbox.h"
 #include "planner_launch.h"
 #include "tilexr_types.h"
 
@@ -86,6 +87,14 @@ extern "C" int TileXRCommNextMagic(TileXRCommPtr, int64_t *magic)
 
 extern "C" aclError aclrtMemcpyAsync(void *dst, size_t destMax, const void *src,
     size_t count, aclrtMemcpyKind, aclrtStream)
+{
+    if (dst == nullptr || src == nullptr || count > destMax) return 1;
+    std::memcpy(dst, src, count);
+    return 0;
+}
+
+extern "C" aclError aclrtMemcpy(void *dst, size_t destMax, const void *src,
+    size_t count, aclrtMemcpyKind)
 {
     if (dst == nullptr || src == nullptr || count > destMax) return 1;
     std::memcpy(dst, src, count);
@@ -226,6 +235,7 @@ struct Fixture {
         commArgs.rankSize = 8;
         commArgs.localRank = 3;
         commArgs.localRankSize = 8;
+        commArgs.extraFlag = TileXR::ExtraFlag::TOPO_910A5;
         for (int rank = 0; rank < commArgs.rankSize; ++rank) {
             commArgs.peerMems[rank] = reinterpret_cast<GM_ADDR>(
                 static_cast<uintptr_t>(0x100000 + rank * 0x10000));
@@ -385,12 +395,33 @@ void TestCommunicatorAndPeerWindows()
     CheckInt("invalid communicator rank size", Validate(fixture), TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
 
     fixture.Reset();
+    fixture.commArgs.extraFlag = 0;
+    CheckInt("non-A5 communicator", Validate(fixture), TileXR::TILEXR_ERROR_NOT_SUPPORT);
+
+    fixture.Reset();
     fixture.runtime.deviceCommArgs = nullptr;
     CheckInt("missing device comm args", Validate(fixture), TileXR::TILEXR_ERROR_NOT_INITIALIZED);
 
     fixture.Reset();
     fixture.commArgs.peerMems[5] = nullptr;
     CheckInt("missing peer memory window", Validate(fixture), TileXR::TILEXR_ERROR_NOT_INITIALIZED);
+
+    fixture.Reset();
+    const TileXREp::Plan::PlanPeerMailboxLayout mailbox =
+        TileXREp::Plan::BuildPlanPeerMailboxLayout(fixture.commArgs.rankSize, fixture.plan.e);
+    const int64_t expertCapacity = static_cast<int64_t>(
+        (mailbox.rowBytes - mailbox.tpe) / sizeof(int32_t));
+    const int64_t oversizedExpertNum =
+        ((expertCapacity / fixture.commArgs.rankSize) + 1) * fixture.commArgs.rankSize;
+    fixture.plan.e = oversizedExpertNum;
+    fixture.arguments.expertNum = oversizedExpertNum;
+    CheckInt("oversized peer mailbox payload layout", TileXREp::Plan::BuildPlanWorkspaceLayout(
+        fixture.commArgs.rankSize, fixture.plan.s, fixture.plan.k, oversizedExpertNum,
+        fixture.config, &fixture.layout), TileXR::TILEXR_SUCCESS);
+    fixture.arguments.localWorkspaceBytes = fixture.layout.local.totalBytes;
+    fixture.arguments.registeredMetaBytes = fixture.layout.registeredMeta.totalBytes;
+    CheckInt("oversized peer mailbox payload", Validate(fixture),
+        TileXR::TILEXR_ERROR_PARA_CHECK_FAIL);
 }
 
 void TestCommittedPlanReuseContract()

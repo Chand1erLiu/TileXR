@@ -19,8 +19,8 @@ contract is in `moonep_planner_v2_downstream_contract.md`.
    metadata through UDMA.
 4. Every rank runs the same deterministic planning algorithm after publishing
    inputs and verifying a common call header.
-5. Reusable magic-tagged barriers provide bounded data, status, and ready
-   phases. Shared flag memory is not reset between calls.
+5. Reusable magic-tagged barriers provide bounded data, status, ready, and
+   final-consensus phases. Shared flag memory is not reset between calls.
 6. Device-kernel implementation remains under `kernels/`; Runtime V2 launch
    and compiler-generated launch stubs are Host responsibilities under
    `host/`.
@@ -57,6 +57,9 @@ contract is in `moonep_planner_v2_downstream_contract.md`.
   local and metadata workspace sizes.
 - `TileXRMoeEpPlanV2` validates the communicator, buffers, Plan identity,
   workspace capacity, peer windows, and stream before launching asynchronously.
+- Planner launch APIs reject communicators that do not advertise
+  `TOPO_910A5`; a kernel built for `dav-c310-vec` is never enqueued on 910B or
+  another incompatible target.
 - `TileXRMoeEpPlanV2WithMetadata` adds an ABI-versioned, counted metadata output
   descriptor while preserving the legacy optimized entry point.
 - `EncodeMoonEPGlobalTokenId`, `DecodeMoonEPGlobalTokenId`, `DecodeMoonEPDst`,
@@ -84,8 +87,9 @@ contract is in `moonep_planner_v2_downstream_contract.md`.
   window with MTE3, then consume all source rows from the current rank's local
   owner `peerMems[rank]` window with MTE2.
 - Exchange the call header, tokens-per-expert row, global rank id, and status.
-- Use three bounded collective phases: data, status, and ready.
-- Reduce rank-local status deterministically before committing the epoch.
+- Use four bounded collective phases: data, status, ready, and consensus.
+- Re-publish the ready outcome and reduce final rank-local status before
+  committing the epoch.
 
 ### Compatibility Layer
 
@@ -95,6 +99,8 @@ contract is in `moonep_planner_v2_downstream_contract.md`.
   rank ids, duplicate buffers, and status from one caller-owned workspace.
 - Preserve legacy optimized `expertsToCopy[B]` as the current destination Rank
   row while copying the MoonEP V1 outward compatibility buffer as `[R,B]`.
+- Validate the complete runtime before copying the generated global-rank map;
+  use a synchronous H2D copy because its source is temporary Host storage.
 - Copy compatibility outputs asynchronously on the caller's stream.
 
 ### Downstream Ownership
@@ -280,17 +286,25 @@ peerMems[target] + IPC_DATA_OFFSET + sourceRank * rowBytes
 
 row:
   PlanCallHeader       128-byte stride
-  tokensPerExpert      E * sizeof(int32_t)
   globalRankId         sizeof(int32_t)
   status               64-byte stride
-  end padding          rowBytes aligned to 512 bytes
+  tokensPerExpert      E * sizeof(int32_t)
+  unused capacity      through a fixed 4 MiB row stride
 ```
 
-The Host validates that all `peerMems[0..R)` entries are non-null and that one
-publication row fits the supported IPC data window. A source rank first writes
-its row under `peerMems[sourceRank]`, loads through MTE2 into a UB relay, and
-uses MTE3 to push the row into the same `sourceRank` slot under every target
-owner window. A destination consumes all rows only from its local owner
+The 4 MiB stride is `IPC_BUFF_MAX_SIZE / TILEXR_MAX_RANK_SIZE`, so header and
+payload addresses do not depend on locally supplied dimensions. This lets
+ranks compare mismatched call headers without first deriving conflicting row
+offsets. Transfers still cover only the 512-byte-aligned prefix containing the
+actual `E` entries; the fixed stride does not turn each publication into a
+4 MiB transfer.
+
+The Host validates that all `peerMems[0..R)` entries are non-null, that the
+actual input prefix fits one fixed row, and that `R * rowBytes` fits the full
+IPC data window. A source rank first writes its row under
+`peerMems[sourceRank]`, loads through MTE2 into a UB relay, and uses MTE3 to push
+the valid prefix into the same `sourceRank` slot under every target owner
+window. A destination consumes all rows only from its local owner
 `peerMems[rank]` mapping.
 
 No Planner path reads `udmaInfoPtr`, `udmaRegistryPtr`, or a registered remote
@@ -298,12 +312,13 @@ memory handle.
 
 ## Barrier Protocol
 
-Planner V2 reserves three phase families in the IPC flag region:
+Planner V2 reserves four phase families in the IPC flag region:
 
 ```text
 data    publish and validate call inputs
 status  publish and reduce rank-local algorithm status
 ready   keep peer windows and the completed Plan mutually ordered
+consensus re-publish ready outcomes and reduce final status before commit
 ```
 
 For each phase and source rank, the slot address is derived from event id 4096,
@@ -336,8 +351,10 @@ order is reusable only when:
 - the affinity-valid bit is set; and
 - the saved topology hash matches.
 
-The kernel writes `committedEpoch = epoch` only after all three phases complete
-and final status is `PLAN_OK`.
+The kernel writes `committedEpoch = epoch` only after all four phases complete
+and the consensus reduction returns `PLAN_OK`. In particular, a rank that
+times out during `ready` republishes that failure before peers evaluate the
+commit condition.
 
 ## Algorithm Stages
 
@@ -401,7 +418,9 @@ Synchronous API failures cover:
 - invalid dimensions/configuration/Plan identity;
 - undersized workspaces;
 - unavailable Host or device `CommArgs`;
+- a communicator without `TOPO_910A5`;
 - missing peer windows;
+- a peer-mailbox payload or complete footprint outside the IPC data window;
 - failure to obtain a new magic; and
 - kernel enqueue failure.
 

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ep_plan_peer_mailbox.h"
 #include "tilexr_types.h"
 
 namespace TileXREp {
@@ -49,10 +50,10 @@ int ValidateRuntimeMetadata(const PlanRuntimeMetadata &runtime, int64_t expertNu
             return TileXR::TILEXR_ERROR_NOT_INITIALIZED;
         }
     }
-    const uint64_t publicationBytes = kPlanHeaderStrideBytes +
-        static_cast<uint64_t>(expertNum) * sizeof(int32_t) +
-        sizeof(int32_t) + kPlanStatusStrideBytes + 3 * kPlanWorkspaceAlignment;
-    if (publicationBytes > static_cast<uint64_t>(TileXR::IPC_BUFF_MAX_SIZE)) {
+    const PlanPeerMailboxLayout mailbox =
+        BuildPlanPeerMailboxLayout(commArgs.rankSize, expertNum);
+    if (mailbox.inputBytes > mailbox.rowBytes ||
+        mailbox.totalBytes > static_cast<uint64_t>(TileXR::IPC_BUFF_MAX_SIZE)) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
     }
     return TileXR::TILEXR_SUCCESS;
@@ -154,6 +155,9 @@ int ValidatePlanHostArguments(
     if (commArgs.rankSize <= 0 || commArgs.rankSize > TileXR::TILEXR_MAX_RANK_SIZE ||
         commArgs.rank < 0 || commArgs.rank >= commArgs.rankSize) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;
+    }
+    if ((commArgs.extraFlag & TileXR::ExtraFlag::TOPO_910A5) == 0) {
+        return TileXR::TILEXR_ERROR_NOT_SUPPORT;
     }
     if (!PlanIdentityMatches(arguments, commArgs.rankSize)) {
         return TileXR::TILEXR_ERROR_PARA_CHECK_FAIL;

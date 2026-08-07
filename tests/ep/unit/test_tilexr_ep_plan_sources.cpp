@@ -341,15 +341,30 @@ void TestPlanLaunchAndCommitProtocol()
     ReadFile("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", &apiSource);
     CheckContains("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", apiSource, "LaunchPlanKernel");
     CheckContains("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", apiSource, "waitIterations");
+    CheckContains("src/moonep/planner_v2/host/tilexr_moonep_planner.cpp", apiSource,
+        "ACL_MEMCPY_HOST_TO_DEVICE");
+
+    std::string hostValidation;
+    ReadFile("src/moonep/planner_v2/host/ep_plan_host.cpp", &hostValidation);
+    CheckContains("src/moonep/planner_v2/host/ep_plan_host.cpp", hostValidation,
+        "TileXR::ExtraFlag::TOPO_910A5");
+    CheckContains("src/moonep/planner_v2/host/ep_plan_host.cpp", hostValidation,
+        "mailbox.totalBytes");
 
     std::string kernel;
     ReadFile("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", &kernel);
+    std::string mailbox;
+    ReadFile("src/moonep/planner_v2/common/ep_plan_peer_mailbox.h", &mailbox);
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel, "PublishInputs");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel, "GatherInputs");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel, "PublishStatus");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel, "GatherStatuses");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "PushPeerMailboxRowMte");
+    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+        "kPhaseConsensus");
+    CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
+        "PublishStatus(peerMems, peerMailbox, rank, rankSize, status, barrierRelay);");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "PeerMailboxRow(peerMems[rank]");
     CheckNotContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
@@ -412,6 +427,10 @@ void TestPlanLaunchAndCommitProtocol()
         "epochState->requestedEpoch = epoch");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "epochState->committedEpoch = epoch");
+    CheckContains("src/moonep/planner_v2/common/ep_plan_peer_mailbox.h", mailbox,
+        "kPlanPeerMailboxRowBytes");
+    CheckContains("src/moonep/planner_v2/common/ep_plan_peer_mailbox.h", mailbox,
+        "layout.inputBytes");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
         "workspace.affinityOrderValid = affinityOrderValid;");
     CheckContains("src/moonep/planner_v2/kernels/tilexr_moonep_planner_kernel.cpp", kernel,
